@@ -1,0 +1,190 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+venv/
+ENV/
+env/
+.venv/
+.ENV/
+.env/
+casista-env/
+
+# AI Assistant Context and User Data
+.ai_context/
+asst/
+*.json
+!requirements*.json
+!package.json
+!tsconfig.json
+
+# IDE and Editor Files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs and Debugging
+*.log
+logs/
+debug.log
+error.log
+combined.log
+
+# Temporary Files
+*.tmp
+*.temp
+temp/
+tmp/
+.cache/
+.pytest_cache/
+
+# Installation and Build Files
+*.deb
+*.rpm
+*.dmg
+*.pkg
+*.installer
+
+# Speech and Audio Cache
+audio_cache/
+speech_cache/
+*.wav
+*.mp3
+*.m4a
+*.aac
+
+# Model Files (if stored locally)
+models/
+*.bin
+*.safetensors
+*.gguf
+
+# Configuration Files with Sensitive Data
+config.ini
+secrets.yaml
+.env.local
+.env.production
+.env.staging
+
+# Test Coverage
+htmlcov/
+.coverage
+.coverage.*
+coverage.xml
+*.cover
+.hypothesis/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# PEP 582
+__pypackages__/
+
+# Celery
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# Local History (VSCode extension)
+.history/
+
+# Custom ignores for this project
+test_*.py
+debug_*.py
+experiments/
+playground/
+*.bak
+*.orig
+
+# macOS specific
+.AppleDouble
+.LSOverride
+Icon
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+
+# Linux specific
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
