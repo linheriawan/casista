@@ -3,7 +3,7 @@
 🤖 Qwen2.5-Coder Assistant
 - Uses Ollama + qwen2.5-coder:3b
 - File operations via code blocks: create, update, mkdir, delete, read
-- Saves context in ./asst/
+- Saves context in .ai_context/
 - Uses current directory as root
 - Supports interactive mode and one-shot queries
 """
@@ -36,12 +36,12 @@ console = Console()
 # Paths
 # ========================================
 WORKING_DIR = Path(".").resolve()
-CONTEXT_DIR = Path("./asst")
+CONTEXT_DIR = Path(".ai_context/coder")
 CONTEXT_FILE = CONTEXT_DIR / "context.json"
 HISTORY_FILE = CONTEXT_DIR / "history.txt"
 
 # Create required paths
-CONTEXT_DIR.mkdir(exist_ok=True)
+CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
 CONTEXT_FILE.touch(exist_ok=True)
 HISTORY_FILE.touch(exist_ok=True)
 
@@ -60,7 +60,7 @@ def ensure_context() -> List[dict]:
     return []
 
 def save_context(messages: List[dict]):
-    CONTEXT_DIR.mkdir(exist_ok=True)
+    CONTEXT_DIR.mkdir(parents=True, exist_ok=True)
     CONTEXT_FILE.write_text(json.dumps({"messages": messages}, indent=2, ensure_ascii=False), encoding='utf-8')
 
 # ========================================

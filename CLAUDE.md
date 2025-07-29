@@ -198,3 +198,43 @@ python3 voice_selector.py set anna 15
 - "What voice are you using?" → Shows current voice
 - "Speak slower" / "Speak faster" → Adjusts speech rate  
 - "Change voice" → Instructions for voice selection
+```
+
+## RAG (Retrieval-Augmented Generation) Features
+
+### Document Processing
+- Support for processing various document types including .docx, .pdf, and more
+- Use the `--rag` or `--document` flag to enable RAG mode with specific documents
+
+### Testing RAG
+- Syntax: `coder [model] [name] chat --rag /path/to/document.pdf`
+- Examples:
+  - Test RAG with a PDF document
+  - Test RAG with a Word document (.docx)
+  - Combine multiple documents in a single RAG query
+
+### Supported Document Types
+- PDF files
+- Microsoft Word documents (.docx)
+- Text files (.txt)
+- Markdown files (.md)
+- CSV files (.csv)
+- Basic spreadsheet formats
+
+### RAG Usage Examples
+```bash
+# RAG with a PDF document
+coder qwen2.5-coder:3b researcher chat --rag /docs/research_paper.pdf
+
+# RAG with multiple documents
+coder llama3.2:3b analyst chat --rag /reports/q1_report.docx --rag /reports/q2_report.pdf
+
+# Specific document query
+coder qwen2.5-coder:3b helper chat --query "Summarize key points" --rag /documents/overview.docx
+```
+
+### RAG Performance Optimization
+- Intelligent document chunking
+- Semantic search for relevant document sections
+- Caching of processed document embeddings
+- Adjustable context window for document processing

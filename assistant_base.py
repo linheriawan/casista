@@ -8,11 +8,15 @@ import os
 import json
 import abc
 import getpass
+import sys
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 import ollama
 from rich.console import Console
 from rich.panel import Panel
+from rich.live import Live
+from rich.layout import Layout
+from rich.text import Text
 
 console = Console()
 
@@ -136,6 +140,32 @@ class ChatAssistant(BaseAssistant):
         self.config["capabilities"] = ["text_chat"]
         if file_ops:
             self.config["capabilities"].append("file_operations")
+        
+        # Initialize RAG if enabled
+        self.rag_assistant = None
+        if self.config.get('rag_enabled', False):
+            self._init_rag()
+    
+    def _init_rag(self):
+        """Initialize RAG system"""
+        try:
+            from rag_system import RAGKnowledgeBase, RAGAssistant
+            
+            kb_dir = self.working_dir / ".ai_context" / "knowledge"
+            self.knowledge_base = RAGKnowledgeBase(kb_dir)
+            self.rag_assistant = RAGAssistant(self.knowledge_base)
+            
+            # Auto-index current project if knowledge base is empty
+            stats = self.knowledge_base.get_stats()
+            if stats['total_documents'] == 0:
+                console.print(f"[cyan]🔍 Auto-indexing project: {self.working_dir}[/]")
+                self.knowledge_base.index_codebase(self.working_dir)
+            
+            console.print(f"[green]✅ RAG enabled with {stats['total_documents']} documents[/]")
+            
+        except Exception as e:
+            console.print(f"[yellow]⚠️ RAG initialization failed: {e}[/]")
+            self.rag_assistant = None
     
     def get_system_prompt(self) -> str:
         user_name = self.get_user_name()
@@ -173,9 +203,15 @@ Always provide real, complete file content. Be concise."""
         # Handle read blocks in user input
         processed_text = self._handle_read_blocks(text)
         
-        # Prepare messages
+        # Prepare messages with RAG enhancement
         system_prompt = self.get_system_prompt()
-        messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": processed_text}]
+        
+        if self.rag_assistant:
+            # Use RAG to enhance the prompt with relevant context
+            enhanced_prompt = self.rag_assistant.enhance_prompt(processed_text, system_prompt)
+            messages_with_system = [{"role": "system", "content": enhanced_prompt}] + messages
+        else:
+            messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": processed_text}]
         
         try:
             console.print(f"\n[bold cyan]🤖 {self.name}:[/]")
@@ -269,20 +305,108 @@ class SpeechAssistant(BaseAssistant):
         super().__init__(model, name, working_dir)
         self.config["capabilities"] = ["text_to_speech", "speech_to_text"]
         
+        # Initialize UI components
+        self.layout = Layout()
+        self.status_text = Text("")
+        self.chat_lines = []
+        
         # Initialize speech components
         self._init_speech_components()
     
     def _init_speech_components(self):
         """Initialize speech recognition and TTS components"""
+        # Initialize speech recognition backend
+        self.speech_backend = self.config.get('speech_backend', 'google')  # 'google', 'whisper', 'vosk'
+        
+        # Try to initialize the preferred backend
+        if self.speech_backend == 'whisper':
+            self._init_whisper()
+        elif self.speech_backend == 'vosk':
+            self._init_vosk()
+        else:
+            self._init_google_sr()
+        
+        # Initialize TTS (always same)
+        self._init_tts()
+    
+    def _init_whisper(self):
+        """Initialize Whisper for local speech recognition"""
+        try:
+            import whisper
+            import speech_recognition as sr
+            
+            # Load Whisper model (configurable size)
+            model_size = self.config.get('whisper_model', 'base')  # tiny, base, small, medium, large
+            console.print(f"[yellow]📥 Loading Whisper model '{model_size}'...[/]")
+            
+            self.whisper_model = whisper.load_model(model_size)
+            self.recognizer = sr.Recognizer() 
+            self.microphone = sr.Microphone()
+            self.sr = sr
+            self.speech_backend = 'whisper'
+            
+            console.print(f"[green]✅ Whisper ({model_size}) speech recognition initialized[/]")
+            
+        except ImportError:
+            console.print("[yellow]⚠️ Whisper not installed, falling back to Google[/]")
+            console.print("[dim]Install with: pip install openai-whisper[/]")
+            self._init_google_sr()
+        except Exception as e:
+            console.print(f"[yellow]⚠️ Whisper failed ({e}), falling back to Google[/]")
+            self._init_google_sr()
+    
+    def _init_vosk(self):
+        """Initialize Vosk for local speech recognition"""
+        try:
+            import vosk
+            import json
+            import pyaudio
+            
+            # Download model if needed (you'd need to implement model management)
+            model_path = self.config.get('vosk_model_path', './vosk-model')
+            if not Path(model_path).exists():
+                console.print(f"[yellow]⚠️ Vosk model not found at {model_path}[/]")
+                console.print("[dim]Download from: https://alphacephei.com/vosk/models[/]")
+                self._init_google_sr()
+                return
+            
+            self.vosk_model = vosk.Model(model_path)
+            self.vosk_rec = vosk.KaldiRecognizer(self.vosk_model, 16000)
+            self.speech_backend = 'vosk'
+            
+            console.print("[green]✅ Vosk local speech recognition initialized[/]")
+            
+        except ImportError:
+            console.print("[yellow]⚠️ Vosk not installed, falling back to Google[/]")
+            console.print("[dim]Install with: pip install vosk[/]")
+            self._init_google_sr()
+        except Exception as e:
+            console.print(f"[yellow]⚠️ Vosk failed ({e}), falling back to Google[/]")
+            self._init_google_sr()
+    
+    def _init_google_sr(self):
+        """Initialize Google speech recognition (online)"""
         try:
             import speech_recognition as sr
-            import pyttsx3
             
-            # Initialize speech recognition
+            self.sr = sr
             self.recognizer = sr.Recognizer()
             self.microphone = sr.Microphone()
+            self.speech_backend = 'google'
             
-            # Initialize text-to-speech
+            console.print("[green]✅ Google speech recognition initialized[/]")
+            
+        except ImportError as e:
+            console.print(f"[red]❌ Speech recognition not available: {e}[/]")
+            console.print("[yellow]💡 Install with: pip install speechrecognition pyaudio[/]")
+            self.recognizer = None
+            self.sr = None
+    
+    def _init_tts(self):
+        """Initialize text-to-speech"""
+        try:
+            import pyttsx3
+            
             self.tts_engine = pyttsx3.init()
             
             # Configure TTS voice from config or use default
@@ -290,83 +414,325 @@ class SpeechAssistant(BaseAssistant):
             preferred_voice = self.config.get('tts_voice', None)
             
             if preferred_voice and voices:
-                # Try to find the preferred voice
                 for voice in voices:
                     if voice.id == preferred_voice or voice.name == preferred_voice:
                         self.tts_engine.setProperty('voice', voice.id)
                         break
             elif voices:
-                # Default: prefer female voice or first available
                 for voice in voices:
                     if 'female' in voice.name.lower() or 'samantha' in voice.name.lower():
                         self.tts_engine.setProperty('voice', voice.id)
                         break
             
-            # Set speech rate from config or default
             speech_rate = self.config.get('speech_rate', 200)
             self.tts_engine.setProperty('rate', speech_rate)
             
-            console.print("[green]✅ Speech components initialized[/]")
-            
         except ImportError as e:
-            console.print(f"[red]❌ Speech libraries not installed: {e}[/]")
-            console.print("[yellow]💡 Install with: pip install speechrecognition pyttsx3 pyaudio[/]")
-            self.recognizer = None
+            console.print(f"[yellow]⚠️ TTS not available: {e}[/]")
+            console.print("[yellow]💡 Install with: pip install pyttsx3[/]")
             self.tts_engine = None
     
     def get_system_prompt(self) -> str:
         user_name = self.get_user_name()
+        
+        # Use custom system prompt from config if available
+        custom_prompt = self.config.get('system_prompt', '')
+        if custom_prompt:
+            # Add voice-specific instructions to custom prompt
+            return f"{custom_prompt}\n\nIMPORTANT: This is voice conversation. Provide clear, spoken responses and wait for voice input. Be conversational and encouraging."
+        
+        # Default fallback
         return f"You are {self.name}, a voice assistant talking to {user_name}. Provide clear, concise spoken responses. Avoid long explanations since this is voice conversation."
     
     def speak(self, text: str):
-        """Convert text to speech"""
-        if not self.tts_engine:
-            console.print(f"[dim]🤖 {self.name} would say: {text}[/]")
+        """Convert text to speech with robust error handling"""
+        if not text or not text.strip():
             return
+            
         
         try:
-            console.print(f"[cyan]🔊 {self.name} speaking...[/]")
-            self.tts_engine.say(text)
-            self.tts_engine.runAndWait()
+            import pyttsx3
+            import threading
+            import time
+            
+            # Global TTS lock to prevent concurrent speech
+            if not hasattr(self.__class__, '_tts_lock'):
+                self.__class__._tts_lock = threading.Lock()
+            
+            with self.__class__._tts_lock:
+                # Create completely fresh engine every time
+                engine = pyttsx3.init()
+                
+                # Set basic properties
+                engine.setProperty('rate', self.config.get('speech_rate', 200))
+                engine.setProperty('volume', 1.0)
+                
+                # Get and set voice
+                voices = engine.getProperty('voices')
+                if voices:
+                    preferred_voice = self.config.get('tts_voice', None)
+                    if preferred_voice:
+                        for voice in voices:
+                            if voice.id == preferred_voice:
+                                engine.setProperty('voice', voice.id)
+                                break
+                    else:
+                        # Use first available voice
+                        engine.setProperty('voice', voices[0].id)
+                
+                # Simple speech with timeout
+                engine.say(text)
+                
+                # Run in separate thread with timeout
+                speech_done = threading.Event()
+                
+                def speak_thread():
+                    try:
+                        engine.runAndWait()
+                        speech_done.set()
+                    except Exception as e:
+                        speech_done.set()
+                
+                thread = threading.Thread(target=speak_thread, daemon=True)
+                thread.start()
+                
+                # Wait for completion with timeout
+                if speech_done.wait(timeout=10):  # 10 second timeout
+                    pass  # Success
+                else:
+                    # Timeout - stop engine
+                    try:
+                        engine.stop()
+                    except:
+                        pass
+                
+                # Clean up
+                try:
+                    del engine
+                except:
+                    pass
+                
+                time.sleep(0.2)  # Brief pause between speeches
+            
         except Exception as e:
             console.print(f"[red]❌ TTS Error: {e}[/]")
-            console.print(f"[dim]🤖 {self.name}: {text}[/]")
+            
+            # Use system 'say' command as fallback on macOS
+            try:
+                if sys.platform == "darwin":  # macOS
+                    import subprocess
+                    subprocess.run(['say', text], timeout=10, check=True)
+                else:
+                    # Final fallback: just show text
+                    if hasattr(self, '_add_chat_line'):
+                        self._add_chat_line(f"🔊 {self.name} would say: {text}", "dim")
+            except Exception:
+                # Final fallback: just show text
+                if hasattr(self, '_add_chat_line'):
+                    self._add_chat_line(f"🔊 {self.name} would say: {text}", "dim")
     
+    def _update_status(self, status: str):
+        """Update the status bar at the top"""
+        self.status_text = Text(status, style="bold cyan")
+    
+    def _add_chat_line(self, text: str, style: str = ""):
+        """Add a line to the chat area"""
+        self.chat_lines.append(Text(text, style=style))
+        # Keep only last 20 lines
+        if len(self.chat_lines) > 20:
+            self.chat_lines = self.chat_lines[-20:]
+    
+    def _setup_layout(self):
+        """Setup the layout with status bar and chat area"""
+        self.layout.split_column(
+            Layout(Panel(self.status_text, height=3), name="status"),
+            Layout(name="chat")
+        )
+        
+        # Build chat content with latest on top
+        chat_content = Text()
+        for line in reversed(self.chat_lines):
+            chat_content.append(line)
+            chat_content.append("\n")
+        
+        self.layout["chat"].update(Panel(chat_content, title="Conversation (Latest First)"))
+        return self.layout
+
     def listen(self) -> Optional[str]:
-        """Listen for speech and convert to text"""
-        if not self.recognizer:
-            print("\r⚠️ Speech recognition not available", end="", flush=True)
+        """Listen for speech and convert to text using configured backend"""
+        if self.speech_backend == 'whisper':
+            return self._listen_whisper()
+        elif self.speech_backend == 'vosk':
+            return self._listen_vosk()
+        else:
+            return self._listen_google()
+    
+    def _listen_whisper(self) -> Optional[str]:
+        """Listen using Whisper (local)"""
+        if not hasattr(self, 'whisper_model') or not self.recognizer:
+            self._update_status("⚠️ Whisper not available")
             return None
         
         try:
-            print("\r🎤 Listening... (speak now)", end="", flush=True)
+            self._update_status("📊 Calibrating microphone... (be quiet)")
             
-            # Adjust for ambient noise
             with self.microphone as source:
-                self.recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.0)
             
-            # Listen for audio
+            self._update_status("🎤 Listening... (speak clearly)")
+            
             with self.microphone as source:
-                audio = self.recognizer.listen(source, timeout=10, phrase_time_limit=10)
+                audio = self.recognizer.listen(source, timeout=15, phrase_time_limit=8)
             
-            print("\r🔄 Processing speech...    ", end="", flush=True)
+            self._update_status("🔄 Processing with Whisper (local)...")
             
-            # Recognize speech using Google Speech Recognition
-            text = self.recognizer.recognize_google(audio)
-            print(f"\r✅ You said: {text}                    ")  # Clear line with spaces
-            return text
+            # Convert to wav data for Whisper
+            wav_data = audio.get_wav_data()
             
-        except sr.WaitTimeoutError:
-            print("\r⏰ Listening timeout - no speech detected")
+            # Save to temporary file for Whisper
+            import tempfile
+            import numpy as np
+            import io
+            
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                tmp_file.write(wav_data)
+                tmp_file.flush()
+                
+                # Process with Whisper
+                result = self.whisper_model.transcribe(tmp_file.name)
+                text = result["text"].strip()
+                
+                # Clean up
+                import os
+                os.unlink(tmp_file.name)
+            
+            if text:
+                self._add_chat_line(f"👤 You: {text}", "green")
+                self._update_status("✅ Speech recognized (Whisper)")
+                return text
+            else:
+                self._update_status("❓ No speech detected")
+                return None
+                
+        except Exception as e:
+            self._update_status(f"❌ Whisper error: {e}")
             return None
-        except sr.UnknownValueError:
-            print("\r❓ Could not understand audio          ")
+    
+    def _listen_vosk(self) -> Optional[str]:
+        """Listen using Vosk (local)"""
+        if not hasattr(self, 'vosk_rec'):
+            self._update_status("⚠️ Vosk not available")
             return None
-        except sr.RequestError as e:
-            print(f"\r❌ Speech recognition error: {e}      ")
+        
+        try:
+            import pyaudio
+            import json
+            
+            self._update_status("🎤 Listening with Vosk... (speak clearly)")
+            
+            # Audio stream setup
+            p = pyaudio.PyAudio()
+            stream = p.open(format=pyaudio.paInt16, channels=1, rate=16000, input=True, frames_per_buffer=8000)
+            stream.start_stream()
+            
+            # Listen for speech
+            frames = []
+            silent_frames = 0
+            recording = False
+            
+            for _ in range(int(16000 / 8000 * 10)):  # 10 seconds max
+                data = stream.read(8000, exception_on_overflow=False)
+                
+                if self.vosk_rec.AcceptWaveform(data):
+                    result = json.loads(self.vosk_rec.Result())
+                    if result.get("text"):
+                        text = result["text"].strip()
+                        break
+                else:
+                    partial = json.loads(self.vosk_rec.PartialResult())
+                    if partial.get("partial"):
+                        recording = True
+                        silent_frames = 0
+                    elif recording:
+                        silent_frames += 1
+                        if silent_frames > 20:  # ~2.5 seconds of silence
+                            break
+            else:
+                # Final result if no intermediate result
+                final = json.loads(self.vosk_rec.FinalResult())
+                text = final.get("text", "").strip()
+            
+            stream.stop_stream()
+            stream.close()
+            p.terminate()
+            
+            if text:
+                self._add_chat_line(f"👤 You: {text}", "green")
+                self._update_status("✅ Speech recognized (Vosk)")
+                return text
+            else:
+                self._update_status("❓ No speech detected")
+                return None
+                
+        except Exception as e:
+            self._update_status(f"❌ Vosk error: {e}")
+            return None
+    
+    def _listen_google(self) -> Optional[str]:
+        """Listen using Google Speech Recognition (online)"""
+        if not self.recognizer or not self.sr:
+            self._update_status("⚠️ Speech recognition not available")
+            return None
+        
+        try:
+            self._update_status("📊 Calibrating microphone... (be quiet)")
+            
+            with self.microphone as source:
+                self.recognizer.adjust_for_ambient_noise(source, duration=1.5)
+                self.recognizer.energy_threshold = max(300, self.recognizer.energy_threshold)
+                self.recognizer.dynamic_energy_threshold = True
+                self.recognizer.pause_threshold = 0.8
+                self.recognizer.phrase_threshold = 0.3
+                self.recognizer.non_speaking_duration = 0.8
+            
+            self._update_status("🎤 Listening... (speak clearly)")
+            
+            with self.microphone as source:
+                audio = self.recognizer.listen(source, timeout=15, phrase_time_limit=8)
+            
+            self._update_status("🔄 Processing with Google (online)...")
+            
+            # Try multiple recognition approaches
+            recognition_attempts = [
+                lambda: self.recognizer.recognize_google(audio, language='en-US'),
+                lambda: self.recognizer.recognize_google(audio, language='en-GB'),
+                lambda: self.recognizer.recognize_google(audio, show_all=False),
+            ]
+            
+            for attempt in recognition_attempts:
+                try:
+                    text = attempt()
+                    if text and text.strip():
+                        self._add_chat_line(f"👤 You: {text}", "green")
+                        self._update_status("✅ Speech recognized (Google)")
+                        return text.strip()
+                except:
+                    continue
+            
+            self._update_status("❓ Could not understand audio")
+            return None
+            
+        except self.sr.WaitTimeoutError:
+            self._update_status("⏰ Listening timeout")
+            return None
+        except self.sr.UnknownValueError:
+            self._update_status("❓ Could not understand audio")
+            return None
+        except self.sr.RequestError as e:
+            self._update_status(f"❌ Google API error: {e}")
             return None
         except Exception as e:
-            print(f"\r❌ Unexpected error: {e}              ")
+            self._update_status(f"❌ Error: {e}")
             return None
     
     def handle_voice_commands(self, text: str) -> bool:
@@ -406,61 +772,81 @@ class SpeechAssistant(BaseAssistant):
         return False
     
     def process_input(self, input_data: Any = None, auto_confirm: bool = False, **kwargs) -> str:
-        """Process voice input and provide voice response"""
-        # If input_data is provided (text), use it directly
-        if input_data and isinstance(input_data, str):
-            text = input_data
-        else:
-            # Listen for voice input
-            text = self.listen()
-            if not text:
+        """Process voice input and provide voice response with htop-like UI"""
+        
+        # Setup initial UI
+        with Live(self._setup_layout(), refresh_per_second=4, screen=True) as live:
+            # If input_data is provided (text), use it directly
+            if input_data and isinstance(input_data, str):
+                text = input_data
+                self._add_chat_line(f"👤 You: {text}", "green")
+            else:
+                # Listen for voice input
+                live.update(self._setup_layout())
+                text = self.listen()
+                live.update(self._setup_layout())
+                if not text:
+                    return ""
+            
+            # Handle voice-specific commands first
+            if self.handle_voice_commands(text):
+                live.update(self._setup_layout())
                 return ""
-        
-        # Handle voice-specific commands first
-        if self.handle_voice_commands(text):
-            return ""
-        
-        # Handle general special commands
-        if self.handle_special_commands(text):
-            return ""
-        
-        messages = self._load_context()
-        
-        # Prepare messages for AI
-        system_prompt = self.get_system_prompt()
-        messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": text}]
-        
-        try:
-            console.print(f"\n[bold cyan]🤖 {self.name} thinking...[/]")
             
-            # Get response from Ollama (non-streaming for voice)
-            response = ollama.chat(
-                model=self.model,
-                messages=messages_with_system,
-                stream=False,
-                options={
-                    'temperature': self.config.get('temperature', 0.1),
-                    'num_predict': 300  # Shorter responses for voice
-                }
-            )
+            # Handle general special commands
+            if self.handle_special_commands(text):
+                live.update(self._setup_layout())
+                return ""
             
-            full_response = response['message']['content']
+            messages = self._load_context()
             
-            # Speak the response
-            self.speak(full_response)
+            # Prepare messages for AI
+            system_prompt = self.get_system_prompt()
+            messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": text}]
             
-            # Save context
-            messages.append({"role": "user", "content": text})
-            messages.append({"role": "assistant", "content": full_response})
-            self._save_context(messages)
-            
-            return full_response
-            
-        except Exception as e:
-            error_msg = f"I'm sorry, I encountered an error: {str(e)}"
-            console.print(f"[red]❌ Error: {e}[/]")
-            self.speak(error_msg)
-            return ""
+            try:
+                self._update_status(f"🤖 {self.name} thinking...")
+                live.update(self._setup_layout())
+                
+                # Get response from Ollama (non-streaming for voice)
+                response = ollama.chat(
+                    model=self.model,
+                    messages=messages_with_system,
+                    stream=False,
+                    options={
+                        'temperature': self.config.get('temperature', 0.1),
+                        'num_predict': 300  # Shorter responses for voice
+                    }
+                )
+                
+                full_response = response['message']['content']
+                self._add_chat_line(f"🤖 {self.name}: {full_response}", "cyan")
+                
+                # Update status to speaking
+                self._update_status(f"🔊 {self.name} speaking...")
+                live.update(self._setup_layout())
+                
+                # Speak the response
+                self.speak(full_response)
+                
+                # Save context
+                messages.append({"role": "user", "content": text})
+                messages.append({"role": "assistant", "content": full_response})
+                self._save_context(messages)
+                
+                # Ready for next input
+                self._update_status("🎤 Ready - say something...")
+                live.update(self._setup_layout())
+                
+                return full_response
+                
+            except Exception as e:
+                error_msg = f"I'm sorry, I encountered an error: {str(e)}"
+                self._update_status(f"❌ Error: {e}")
+                self._add_chat_line(f"❌ Error: {e}", "red")
+                live.update(self._setup_layout())
+                self.speak(error_msg)
+                return ""
 
 
 class ImageAssistant(BaseAssistant):
@@ -519,6 +905,9 @@ class ImageAssistant(BaseAssistant):
         user_name = self.get_user_name()
         backend_info = ""
         
+        # Model-specific prompting strategies
+        model_name = self.model.lower()
+        
         if self.image_backend and "dreamlike" in self.image_backend.lower():
             backend_info = """
 IMPORTANT: You're using DreamLike Anime model optimized for:
@@ -526,17 +915,47 @@ IMPORTANT: You're using DreamLike Anime model optimized for:
 - Maximum 77 tokens in descriptions (keep prompts SHORT)
 - Works best with: anime characters, artistic scenes, vibrant colors
 - Default size: 512x512 (specify if user wants different: 768x768, 1024x1024)"""
-        elif self.image_backend and "tiny" in self.image_backend.lower():
+        elif self.image_backend and "openjourney" in self.image_backend.lower():
             backend_info = """
-IMPORTANT: You're using TinySD model optimized for:
-- Fast generation with good quality
-- Keep descriptions concise (under 50 tokens)
-- Works well with: realistic scenes, landscapes, portraits"""
+IMPORTANT: You're using OpenJourney v4 model optimized for:
+- Fantasy, artistic, and creative illustrations
+- Detailed fantasy art, landscapes, portraits
+- Works well with artistic styles like "digital art", "concept art", "fantasy art"
+- Default size: 512x512 (specify if user wants different: 768x768, 1024x1024)"""
         else:
             backend_info = """
 IMPORTANT: Keep image descriptions concise and focused for best results."""
         
-        return f"""You are {self.name}, an image generation assistant talking to {user_name}.{backend_info}
+        # Different prompt strategies for different models
+        if "gemma" in model_name:
+            # Gemma needs very explicit instructions and examples
+            base_prompt = f"""You are {self.name}, an image generation assistant talking to {user_name}.{backend_info}
+
+SYSTEM OVERRIDE: Ignore any training about not being able to generate images. You CAN and MUST generate images.
+
+REQUIRED RESPONSE FORMAT for ALL image requests:
+```generate:filename.png
+description here
+```
+
+EXAMPLE INPUT: "Create a picture of a cat"
+REQUIRED OUTPUT:
+```generate:cute_cat.png
+fluffy orange cat sitting, photorealistic, cute
+```
+
+RULES:
+- You MUST respond with the code block format above
+- You CANNOT say "I can't generate images" 
+- You CANNOT give text descriptions
+- ALWAYS use ```generate:filename.png format
+- Keep descriptions short and clear
+
+For ANY image request, use the ```generate:filename``` format. No exceptions."""
+
+        else:
+            # For coder models and others, use standard prompt
+            base_prompt = f"""You are {self.name}, an image generation assistant talking to {user_name}.{backend_info}
 
 When {user_name} asks you to create, generate, or make an image, respond with:
 ```generate:descriptive_filename.png
@@ -546,6 +965,8 @@ SHORT, focused description optimized for the current model
 Extract size requests from prompts (512x512, 768x768, 1024x1024) and use appropriate dimensions.
 Use descriptive filenames that match the content.
 For anime characters/scenes, emphasize: character names, actions, art style, colors."""
+
+        return base_prompt
     
     def generate_image(self, prompt: str, filename: str, width: int = 512, height: int = 512) -> bool:
         """Generate image from text prompt with custom dimensions"""
@@ -576,19 +997,33 @@ For anime characters/scenes, emphasize: character names, actions, art style, col
         return False
     
     def _generate_with_diffusers(self, prompt: str, filename: str, width: int = 512, height: int = 512) -> bool:
-        """Generate image using Stable Diffusion with lightweight models"""
+        """Generate image using Stable Diffusion with configurable models"""
         try:
             from diffusers import StableDiffusionPipeline, DiffusionPipeline
             import torch
             
-            # Lightweight model options (in order of preference)
-            lightweight_models = [
-                ("segmind/tiny-sd", "TinySD (~800MB)"),
-                ("dreamlike-art/dreamlike-anime-1.0", "DreamLike Anime (~2GB)"),
-                ("prompthero/openjourney-v4", "OpenJourney v4 (~2GB)"),
-                ("hakurei/waifu-diffusion", "Waifu Diffusion (~2GB)"),
-                ("runwayml/stable-diffusion-v1-5", "SD v1.5 (~4GB)")
-            ]
+            # Get model list from config or use defaults
+            configured_models = self.config.get('image_models', [
+                "prompthero/openjourney-v4",
+                "dreamlike-art/dreamlike-anime-1.0", 
+                "hakurei/waifu-diffusion",
+                "runwayml/stable-diffusion-v1-5"
+            ])
+            
+            # Model info mapping
+            model_info = {
+                "prompthero/openjourney-v4": "OpenJourney v4 (~2GB)",
+                "dreamlike-art/dreamlike-anime-1.0": "DreamLike Anime (~2GB)",
+                "hakurei/waifu-diffusion": "Waifu Diffusion (~2GB)", 
+                "runwayml/stable-diffusion-v1-5": "SD v1.5 (~4GB)",
+                "segmind/tiny-sd": "TinySD (~800MB)"
+            }
+            
+            # Build lightweight_models list from config
+            lightweight_models = []
+            for model_id in configured_models:
+                model_name = model_info.get(model_id, f"{model_id} (Unknown size)")
+                lightweight_models.append((model_id, model_name))
             
             console.print("[cyan]🔍 Trying lightweight models...[/]")
             
@@ -599,18 +1034,22 @@ For anime characters/scenes, emphasize: character names, actions, art style, col
                 try:
                     console.print(f"[dim]Attempting: {model_name}[/]")
                     
-                    # Special handling for TinySD
+                    # Handle different model types  
                     if "tiny-sd" in model_id:
                         pipe = DiffusionPipeline.from_pretrained(
                             model_id,
                             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                            use_safetensors=True
+                            use_safetensors=True,
+                            safety_checker=None,
+                            requires_safety_checker=False
                         )
                     else:
                         pipe = StableDiffusionPipeline.from_pretrained(
                             model_id,
                             torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-                            use_safetensors=True
+                            use_safetensors=True,
+                            safety_checker=None,
+                            requires_safety_checker=False
                         )
                     
                     # Move to GPU if available
@@ -654,9 +1093,26 @@ For anime characters/scenes, emphasize: character names, actions, art style, col
                 width=width
             ).images[0]
             
+            # Ensure filename has proper extension
+            if not filename.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                if not filename.endswith('.'):
+                    filename += '.png'
+                else:
+                    filename += 'png'
+            
             # Save to working directory
             image_path = self.working_dir / filename
-            image.save(image_path)
+            
+            # Save with explicit format specification
+            if filename.lower().endswith('.png'):
+                image.save(image_path, format='PNG')
+            elif filename.lower().endswith(('.jpg', '.jpeg')):
+                image.save(image_path, format='JPEG')
+            elif filename.lower().endswith('.webp'):
+                image.save(image_path, format='WEBP')
+            else:
+                # Default to PNG
+                image.save(image_path, format='PNG')
             
             console.print(f"[green]✅ Image saved: {image_path}[/]")
             console.print(f"[dim]Model used: {used_model}[/]")
@@ -687,7 +1143,19 @@ For anime characters/scenes, emphasize: character names, actions, art style, col
         
         # Get AI response for image description/generation
         system_prompt = self.get_system_prompt()
-        messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": text}]
+        
+        # For gemma models, add few-shot examples to help it understand the format
+        if "gemma" in self.model.lower() and not messages:
+            # Add example conversations if context is empty
+            few_shot_examples = [
+                {"role": "user", "content": "Create an image of a sunset over mountains"},
+                {"role": "assistant", "content": "```generate:mountain_sunset.png\nsunset over mountain range, golden sky, silhouette peaks, scenic landscape\n```"},
+                {"role": "user", "content": "Generate a picture of a robot"},
+                {"role": "assistant", "content": "```generate:robot_character.png\nfuturistic robot, metallic blue, standing pose, sci-fi style\n```"}
+            ]
+            messages_with_system = [{"role": "system", "content": system_prompt}] + few_shot_examples + [{"role": "user", "content": text}]
+        else:
+            messages_with_system = [{"role": "system", "content": system_prompt}] + messages + [{"role": "user", "content": text}]
         
         try:
             console.print(f"\n[bold cyan]🤖 {self.name}:[/]")
@@ -708,12 +1176,32 @@ For anime characters/scenes, emphasize: character names, actions, art style, col
             
             # Parse for image generation commands
             import re
-            pattern = r"```generate:([^\n]+)\n(.*?)\n```"
-            matches = re.findall(pattern, full_response, re.DOTALL)
             
-            for filename, description in matches:
+            # Try multiple patterns to catch different formats
+            patterns = [
+                r"```generate:([^\n]+)\n(.*?)\n```",  # Full code block format
+                r"```generate:([^\n]+)\n(.*?)```",    # Code block without trailing newline
+                r"generate:([^\n\s]+)\.png\s*(.*?)(?=\n|$)",  # Simple format: generate:filename.png description
+                r"```generate:([^\n]+)```",           # Single line code block
+            ]
+            
+            matches = []
+            for pattern in patterns:
+                found = re.findall(pattern, full_response, re.DOTALL | re.MULTILINE)
+                if found:
+                    matches.extend(found)
+                    break  # Use first successful pattern
+            
+            for match in matches:
+                if isinstance(match, tuple) and len(match) >= 2:
+                    filename, description = match[0], match[1]
+                elif isinstance(match, tuple) and len(match) == 1:
+                    filename, description = match[0], ""
+                else:
+                    filename, description = str(match), ""
+                    
                 filename = filename.strip()
-                description = description.strip()
+                description = description.strip() if description else "generated image"
                 
                 # Parse size from description or filename
                 size_match = re.search(r'(\d+)x(\d+)', description + " " + filename)
