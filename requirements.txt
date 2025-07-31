@@ -1,0 +1,31 @@
+# Core Dependencies
+ollama>=0.1.7
+rich>=13.0.0
+typer>=0.9.0
+prompt_toolkit>=3.0.0
+
+# Speech Dependencies (Optional - for speech mode)
+speechrecognition>=3.10.0
+pyttsx3>=2.90
+pyaudio>=0.2.11
+
+# RAG Dependencies (Optional - for document processing)
+sentence-transformers>=2.2.0
+numpy>=1.24.0
+faiss-cpu>=1.7.4
+
+# Document Processing Dependencies (Optional - for RAG with documents)
+python-docx>=0.8.11
+PyPDF2>=3.0.1
+
+# Development/Testing Dependencies (Optional - for PDF/DOCX generation)
+reportlab>=4.0.0
+
+# Additional Dependencies for Advanced Features
+sqlite3-utils>=3.34.0
+
+# Optional Model Dependencies
+# whisper>=1.1.0  # Uncomment for local speech recognition
+# vosk>=0.3.45    # Uncomment for offline speech recognition
+# transformers>=4.30.0  # Uncomment for advanced NLP features
+# torch>=2.0.0    # Uncomment if using PyTorch-based models

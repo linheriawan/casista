@@ -23,15 +23,72 @@ def run_command(cmd, description):
         console.print(f"[red]❌ {description} failed: {e.stderr}[/]")
         return False
 
+def install_requirements(pip_cmd: str, requirements_file: Path, group_name: str, required: bool = True):
+    """Install requirements from a specific group"""
+    console.print(f"[cyan]📦 Installing {group_name}...[/]")
+    
+    try:
+        with open(requirements_file, 'r') as f:
+            lines = f.readlines()
+        
+        # Parse requirements by group
+        current_section = "core"
+        requirements = {"core": [], "speech": [], "rag": [], "development": [], "optional": []}
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                if "Speech Dependencies" in line:
+                    current_section = "speech"
+                elif "RAG Dependencies" in line:
+                    current_section = "rag"
+                elif "Development" in line:
+                    current_section = "development"
+                elif "Optional" in line:
+                    current_section = "optional"
+                continue
+            
+            if not line.startswith('#') and '>' in line:
+                requirements[current_section].append(line)
+        
+        # Install the requested group
+        if group_name.lower() in requirements and requirements[group_name.lower()]:
+            deps = ' '.join(requirements[group_name.lower()])
+            result = subprocess.run(f"{pip_cmd} install {deps}", shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                console.print(f"[green]✅ {group_name} dependencies installed[/]")
+                return True
+            else:
+                if required:
+                    console.print(f"[red]❌ {group_name} dependencies failed: {result.stderr}[/]")
+                    return False
+                else:
+                    console.print(f"[yellow]⚠️ {group_name} dependencies failed (optional)[/]")
+                    return True
+        else:
+            console.print(f"[yellow]⚠️ No {group_name} dependencies found[/]")
+            return True
+            
+    except Exception as e:
+        console.print(f"[red]❌ Error installing {group_name}: {e}[/]")
+        return not required
+
 def main():
     current_dir = Path(__file__).parent.absolute()
     venv_dir = current_dir / "venv"
+    requirements_file = current_dir / "requirements.txt"
     
     console.print("[bold cyan]🚀 Setting up AI Assistant System[/]")
     
     # Check Python version
     if sys.version_info < (3, 8):
         console.print("[red]❌ Python 3.8+ required[/]")
+        return
+    
+    # Check if requirements.txt exists
+    if not requirements_file.exists():
+        console.print("[red]❌ requirements.txt not found[/]")
         return
     
     # Create virtual environment
@@ -43,25 +100,23 @@ def main():
     
     # Install dependencies
     pip_cmd = f"{venv_dir}/bin/pip"
-    base_dependencies = "ollama rich typer prompt_toolkit"
-    speech_dependencies = "speechrecognition pyttsx3 pyaudio"
     
     if not run_command(f"{pip_cmd} install --upgrade pip", "Upgrading pip"):
         return
     
-    if not run_command(f"{pip_cmd} install {base_dependencies}", "Installing base dependencies"):
+    # Install core dependencies
+    if not install_requirements(pip_cmd, requirements_file, "core", required=True):
         return
     
-    # Try to install speech dependencies (optional)
-    console.print("[cyan]📢 Installing speech dependencies (optional)...[/]")
-    result = subprocess.run(f"{pip_cmd} install {speech_dependencies}", shell=True, capture_output=True, text=True)
-    if result.returncode == 0:
-        console.print("[green]✅ Speech dependencies installed[/]")
-    else:
-        console.print("[yellow]⚠️ Speech dependencies failed to install (speech mode won't work)[/]")
-        console.print("[dim]You may need to install system audio libraries first[/]")
-        if "darwin" in sys.platform:  # macOS
-            console.print("[dim]Try: brew install portaudio[/]")
+    # Install optional dependencies
+    install_requirements(pip_cmd, requirements_file, "speech", required=False)
+    install_requirements(pip_cmd, requirements_file, "rag", required=False)
+    
+    # Special handling for audio dependencies on macOS
+    if "darwin" in sys.platform.lower():
+        console.print("[yellow]💡 macOS detected - if speech installation failed, try:[/]")
+        console.print("[dim]brew install portaudio[/]")
+        console.print("[dim]Then run: pip install pyaudio[/]")
     
     # Make scripts executable
     for script in ["main.py", "install.py", "setup.py"]:

@@ -107,6 +107,8 @@ full new content
 - **Development Mode**: Direct execution via `./venv/bin/python main.py`
 
 ## Project Structure
+
+### Current Structure
 ```
 casista/
 ├── main.py              # New CLI wrapper
@@ -114,10 +116,33 @@ casista/
 ├── setup.py            # Environment setup
 ├── install.py          # Global installation
 ├── coder.py            # Legacy single assistant
+├── rag_system.py       # RAG implementation
+├── voice_selector.py   # Voice management utilities
 ├── .ai_context/        # Per-assistant contexts
 │   └── assistant_name/
 ├── asst/              # Legacy context storage
 └── venv/              # Python virtual environment
+```
+
+### Planned Enhanced Structure (from design.md)
+```
+casista/
+├── main.py    
+├── library/                    # Core functionality modules
+│   ├── coding/                # Code generation and analysis
+│   ├── conversation/          # Chat and dialogue management
+│   └── image_generation/      # Image processing capabilities
+├── configuration/             # System configuration
+│   ├── model_traits/         # System prompts, personalities
+│   └── system_config/        # Model directory, settings
+├── helper/                   # Management utilities
+│   ├── manage_agent/         # Agent creation and configuration
+│   ├── manage_voice/         # Voice and speech management
+│   ├── manage_model/         # AI model management  
+│   └── rag/                  # RAG knowledge management
+├── requirements.txt
+├── setup.py
+└── install.py
 ```
 
 ## Dependencies
@@ -238,3 +263,58 @@ coder qwen2.5-coder:3b helper chat --query "Summarize key points" --rag /documen
 - Semantic search for relevant document sections
 - Caching of processed document embeddings
 - Adjustable context window for document processing
+
+## TODO: Planned Enhancements
+
+### Architecture Refactoring
+- [ ] **Modularize Core Functionality**
+  - [ ] Create `library/coding/` module for code generation and analysis
+  - [ ] Create `library/conversation/` module for chat management
+  - [ ] Create `library/image_generation/` module for image processing
+  - [ ] Refactor existing code into modular structure
+
+- [ ] **Configuration Management**
+  - [ ] Implement `configuration/model_traits/` for system prompts and personalities
+  - [ ] Create `configuration/system_config/` for model directory and settings
+  - [ ] Centralize configuration loading and validation
+
+### Helper Utilities Enhancement
+- [ ] **Agent Management System**
+  - [ ] `helper/manage_agent/create_agent` - Agent creation wizard
+  - [ ] `helper/manage_agent/set_agent_model` - Bind agent to AI model
+  - [ ] `helper/manage_agent/set_agent_voice` - Configure agent voice
+  - [ ] `helper/manage_agent/set_agent_rag` - Configure agent RAG knowledge
+
+- [ ] **Voice Management System**
+  - [ ] `helper/manage_voice/list_tts_voices` - List local TTS voices
+  - [ ] `helper/manage_voice/list_sr_models` - List Speech Recognition models
+  - [ ] `helper/manage_voice/download_sr_model` - Download SR models
+  - [ ] `helper/manage_voice/remove_sr_model` - Remove SR models
+
+- [ ] **Model Management System**
+  - [ ] `helper/manage_model/set_cache_dir` - Configure HuggingFace cache
+  - [ ] `helper/manage_model/list_models` - Enhanced model listing
+  - [ ] `helper/manage_model/download_model` - Model download utility
+  - [ ] `helper/manage_model/remove_model` - Model removal utility
+
+- [ ] **RAG Knowledge Management**
+  - [ ] `helper/rag/create_knowledge` - Create RAG knowledge base
+  - [ ] `helper/rag/list_knowledge` - List available knowledge bases
+  - [ ] `helper/rag/update_knowledge` - Update existing knowledge
+  - [ ] `helper/rag/remove_knowledge` - Remove knowledge bases
+
+### Feature Enhancements
+- [ ] **Image Generation Support**
+  - [ ] Integrate with image generation models
+  - [ ] Support for visual assistant modes
+  - [ ] Image processing and analysis capabilities
+
+- [ ] **Advanced Configuration**
+  - [ ] Per-agent personality system
+  - [ ] Custom system prompt management
+  - [ ] Advanced model trait configuration
+
+- [ ] **CLI Improvements**
+  - [ ] Interactive setup wizard
+  - [ ] Enhanced help system
+  - [ ] Configuration validation and migration tools
