@@ -21,17 +21,22 @@ def create_executable_script():
     script_content = f'''#!/usr/bin/env python3
 import sys
 import os
+import subprocess
+
+# Capture the original working directory before changing it
+original_cwd = os.getcwd()
 
 # Add the casista directory to Python path
 sys.path.insert(0, "{current_dir}")
+
+# Set environment variable for the original working directory
+os.environ['ORIGINAL_CWD'] = original_cwd
+
+# Change to casista directory for running the script
 os.chdir("{current_dir}")
 
-# Activate virtual environment
-import subprocess
+# Run the main script with the virtual environment Python and pass original cwd
 venv_python = "{current_dir}/venv/bin/python"
-
-# Run the main script with the virtual environment Python
-import sys
 subprocess.run([venv_python, "{current_dir}/main.py"] + sys.argv[1:])
 '''
     
@@ -110,6 +115,8 @@ def create_symlink():
         
         # Create wrapper script instead of symlink for better compatibility
         wrapper_content = f'''#!/bin/bash
+# Capture original working directory
+export ORIGINAL_CWD="$(pwd)"
 cd "{current_dir}"
 "{current_dir}/venv/bin/python" "{main_script}" "$@"
 '''
@@ -177,7 +184,7 @@ def check_dependencies():
     
     # Check optional dependencies
     optional_deps = {
-        "speech": ["speechrecognition", "pyttsx3", "pyaudio"],
+        "speech": ["speech_recognition", "pyttsx3", "pyaudio"],
         "rag": ["sentence_transformers", "numpy", "faiss"],
         "documents": ["docx", "PyPDF2"]
     }
@@ -233,7 +240,7 @@ def install_optional_dependencies(category: str):
                     current_section = "development"
                 continue
             
-            if not line.startswith('#') and '>' in line:
+            if not line.startswith('#') and any(op in line for op in ['>=', '==', '>', '<', '~=']):
                 if current_section in requirements:
                     requirements[current_section].append(line)
         

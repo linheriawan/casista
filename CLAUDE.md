@@ -36,18 +36,20 @@ coder qwen2.5-coder:3b mycoder chat --reset
 
 ## Architecture
 
-### New Modular System
+### Modular System (Refactored 2024)
 
-**Multi-Modal Architecture**
-- **BaseAssistant**: Abstract base class for all assistant types
-- **ChatAssistant**: Text-based chat with optional file operations
-- **SpeechAssistant**: Voice interaction with speech recognition and text-to-speech
-- **ImageAssistant**: Image processing (placeholder for future)
+**Architecture Overview**
+- **Modular Design**: Separated concerns into `library/`, `helper/`, and `configuration/` modules
+- **TOML Configuration**: All configuration moved from Python to TOML files
+- **Assistant Management**: Comprehensive CLI for creating, configuring, and managing assistants
+- **RAG Knowledge**: Global knowledge base system with .ragfile vector storage
+- **Session Management**: Working directory handling with per-session overrides
 
-**Assistant Factory (`assistant_base.py`)**
-- Creates appropriate assistant based on mode (chat/speech/image)
-- Manages model switching and configuration
-- Handles context persistence per assistant instance
+**Core Components**
+- **library/**: Core functionality (coding, conversation, image generation, configuration loading)
+- **helper/**: Management utilities (agents, models, voice, RAG knowledge)
+- **configuration/**: TOML configuration files (models, personalities, prompts)
+- **main.py**: Unified CLI interface with comprehensive management commands
 
 **Main CLI (`main.py`)**
 - Unified command interface: `coder [model] [name] [mode] [options]`
@@ -108,42 +110,52 @@ full new content
 
 ## Project Structure
 
-### Current Structure
+### Current Refactored Structure
 ```
 casista/
-├── main.py              # New CLI wrapper
-├── assistant_base.py    # Assistant framework
-├── setup.py            # Environment setup
-├── install.py          # Global installation
-├── coder.py            # Legacy single assistant
-├── rag_system.py       # RAG implementation
-├── voice_selector.py   # Voice management utilities
-├── .ai_context/        # Per-assistant contexts
-│   └── assistant_name/
-├── asst/              # Legacy context storage
-└── venv/              # Python virtual environment
+├── main.py                     # Unified CLI interface
+├── setup.py                   # Environment setup
+├── install.py                 # Global installation
+├── library/                   # Core functionality modules
+│   ├── assistant_cfg.py       # Complete assistant configuration
+│   ├── config_loader.py       # Base TOML configuration loader
+│   ├── model_cfg.py           # Model configuration management
+│   ├── personality_cfg.py     # Personality management
+│   ├── prompt_cfg.py          # Prompt template system
+│   ├── coding/                # Code generation and analysis
+│   │   ├── code_gen.py        # Code generation utilities
+│   │   └── file_ops.py        # File operation parsing/execution
+│   ├── conversation/          # Chat and dialogue management
+│   │   ├── chat_manager.py    # Chat session management
+│   │   ├── context.py         # Conversation context handling
+│   │   └── ollama_client.py   # Ollama API integration
+│   └── image_generation/      # Image processing capabilities
+│       ├── generation.py      # Image generation core
+│       └── models.py          # Image model management
+├── helper/                    # Management utilities
+│   ├── manage_agent.py        # Agent creation and configuration
+│   ├── manage_voice.py        # Voice and speech management
+│   ├── manage_model.py        # AI model management
+│   └── rag_knowledge.py       # RAG knowledge management
+├── configuration/             # TOML configuration files
+│   ├── default.model.toml     # Model definitions
+│   ├── default.personality.toml # Personality configurations
+│   └── default.prompt.toml    # Prompt templates
+├── knowledge/                 # Global RAG knowledge base (.ragfile storage)
+├── .ai_context/              # Per-assistant contexts
+│   └── [assistant_name]/     # Individual assistant data
+├── requirements.txt
+└── venv/                     # Python virtual environment
 ```
 
-### Planned Enhanced Structure (from design.md)
-```
-casista/
-├── main.py    
-├── library/                    # Core functionality modules
-│   ├── coding/                # Code generation and analysis
-│   ├── conversation/          # Chat and dialogue management
-│   └── image_generation/      # Image processing capabilities
-├── configuration/             # System configuration
-│   ├── model_traits/         # System prompts, personalities
-│   └── system_config/        # Model directory, settings
-├── helper/                   # Management utilities
-│   ├── manage_agent/         # Agent creation and configuration
-│   ├── manage_voice/         # Voice and speech management
-│   ├── manage_model/         # AI model management  
-│   └── rag/                  # RAG knowledge management
-├── requirements.txt
-├── setup.py
-└── install.py
-```
+### Cleaned Up Files (Removed in Refactor)
+- `assistant_base.py` - Legacy monolithic assistant system
+- `coder.py` - Legacy single assistant implementation
+- `coder_shortcuts.py` - Legacy shortcuts
+- `rag_system.py` - Replaced by `helper/rag_knowledge.py`
+- `voice_selector.py` - Replaced by `helper/manage_voice.py`
+- `set_voice_personality.py` - Legacy utility, functionality moved to CLI
+- Test files: `test_image_generation.py`, `create_test_*.py`
 
 ## Dependencies
 

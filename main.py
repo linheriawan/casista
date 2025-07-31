@@ -1,758 +1,699 @@
 #!/usr/bin/env python3
 """
-Main CLI wrapper for the multi-modal AI assistant system
-Usage: python main.py [model] [assistant-name] [chat|speech|image] [options]
+Enhanced CLI wrapper for the multi-modal AI assistant system.
+
+Usage: coder [assistant_name] [mode] [options]
+       coder [management_command] [options]
 """
 
-import os
 import sys
 import argparse
-import json
 from pathlib import Path
 from typing import Optional
-import ollama
 from rich.console import Console
-from rich.table import Table
 from rich.panel import Panel
 
-from assistant_base import create_assistant, BaseAssistant
+# Import management utilities
+from helper.manage_agent import AgentManager
+from helper.manage_voice import VoiceManager
+from helper.manage_model import ModelManager
+from helper.rag_knowledge import RAGKnowledgeManager
+from library.assistant_cfg import AssistantConfig
 
 console = Console()
 
-def list_available_models():
-    """List available Ollama models"""
-    try:
-        models = ollama.list()
-        if not models.get('models'):
-            console.print("[yellow]⚠️ No Ollama models found. Install models first.[/]")
-            return []
-        
-        table = Table(title="Available Models")
-        table.add_column("Model", style="cyan")
-        table.add_column("Size", style="green")
-        table.add_column("Modified", style="dim")
-        
-        for model in models['models']:
-            name = getattr(model, 'model', 'Unknown')
-            size_bytes = getattr(model, 'size', 0)
-            size = f"{size_bytes / (1024**3):.1f}GB" if size_bytes else 'Unknown'
-            modified_at = getattr(model, 'modified_at', None)
-            if modified_at:
-                modified = str(modified_at)[:19]
-            else:
-                modified = 'Unknown'
-            table.add_row(name, size, modified)
-        
-        console.print(table)
-        return [getattr(m, 'model', '') for m in models['models']]
-    except Exception as e:
-        console.print(f"[red]❌ Error listing models: {e}[/]")
-        return []
 
-def interactive_mode(assistant: BaseAssistant, auto_confirm: bool = False):
-    """Run assistant in interactive mode"""
-    user_name = assistant.get_user_name()
-    mode_name = assistant.__class__.__name__.replace('Assistant', '').lower()
+def create_parser():
+    """Create argument parser with all commands."""
+    parser = argparse.ArgumentParser(
+        prog="coder",
+        description="AI Assistant with RAG, Voice, and Image Generation",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  # Basic Usage
+  coder mycoder chat                                    # Start chat session
+  coder mycoder chat --working-dir /projects/webapp     # Chat with specific working directory
+  coder mycoder speech                                  # Start voice session
+  coder mycoder image --prompt "A beautiful landscape"  # Generate image
+  
+  # Agent Management
+  coder create-agent                                    # Interactive agent creation
+  coder list-agents                                     # List all agents
+  coder clone-agent mycoder webcoder                    # Clone agent
+  coder delete-agent oldcoder                           # Delete agent
+  
+  # Knowledge Management
+  coder index-knowledge ./docs python_docs             # Index directory to RAG file
+  coder list-knowledge                                  # List RAG files
+  coder set-rag mycoder python_docs,web_dev           # Set RAG files for agent
+  
+  # Configuration
+  coder set-model mycoder qwen2.5-coder:7b            # Set model for agent
+  coder set-personality mycoder creative               # Set personality for agent
+  coder set-voice mycoder 5                           # Set voice for agent
+  coder configure mycoder                              # Interactive configuration
+        """
+    )
+    
+    # Main assistant execution
+    parser.add_argument("assistant_name", nargs="?", help="Assistant name to use")
+    parser.add_argument("mode", nargs="?", choices=["chat", "speech", "image"], 
+                       default="chat", help="Assistant mode (default: chat)")
+    
+    # Session options
+    parser.add_argument("--working-dir", "-w", type=Path, help="Working directory for this session")
+    parser.add_argument("--query", "-q", help="One-shot query instead of interactive mode")
+    parser.add_argument("--auto-confirm", "-y", action="store_true", help="Auto-confirm file operations")
+    parser.add_argument("--no-file-ops", action="store_true", help="Disable file operations")
+    
+    # Image generation options
+    parser.add_argument("--prompt", help="Image generation prompt")
+    parser.add_argument("--width", type=int, default=512, help="Image width")
+    parser.add_argument("--height", type=int, default=512, help="Image height")
+    parser.add_argument("--model", help="Specific model to use for this session")
+    
+    # Management commands (these take precedence over assistant execution)
+    management = parser.add_argument_group("Management Commands")
+    
+    # Agent management
+    management.add_argument("--create-agent", action="store_true", help="Create new agent interactively")
+    management.add_argument("--list-agents", action="store_true", help="List all agents")
+    management.add_argument("--show-agent", metavar="AGENT", help="Show agent information")
+    management.add_argument("--clone-agent", nargs=2, metavar=("SOURCE", "TARGET"), help="Clone agent")
+    management.add_argument("--delete-agent", metavar="AGENT", help="Delete agent")
+    management.add_argument("--configure", metavar="AGENT", help="Configure agent interactively")
+    
+    # Model management  
+    management.add_argument("--list-models", action="store_true", help="List available models")
+    management.add_argument("--download-model", metavar="MODEL", help="Download/pull model")
+    management.add_argument("--remove-model", metavar="MODEL", help="Remove model")
+    management.add_argument("--model-info", metavar="MODEL", help="Show model information")
+    management.add_argument("--set-model", nargs=2, metavar=("AGENT", "MODEL"), help="Set model for agent")
+    management.add_argument("--clean-hf-cache", action="store_true", help="Clean HuggingFace model cache")
+    
+    # Voice management
+    management.add_argument("--list-voices", action="store_true", help="List TTS voices")
+    management.add_argument("--test-voice", metavar="VOICE_ID", help="Test TTS voice")
+    management.add_argument("--set-voice", nargs=2, metavar=("AGENT", "VOICE_ID"), help="Set voice for agent")
+    management.add_argument("--list-speech-backends", action="store_true", help="List speech recognition backends")
+    management.add_argument("--set-speech-backend", nargs=2, metavar=("AGENT", "BACKEND"), help="Set speech backend")
+    management.add_argument("--configure-voice", metavar="AGENT", help="Configure voice for agent")
+    
+    # Knowledge management
+    management.add_argument("--index-knowledge", nargs=2, metavar=("SOURCE_DIR", "RAGFILE_NAME"), 
+                           help="Index directory into RAG file")
+    management.add_argument("--list-knowledge", action="store_true", help="List RAG files")
+    management.add_argument("--delete-knowledge", metavar="RAGFILE", help="Delete RAG file")
+    management.add_argument("--set-rag", nargs=2, metavar=("AGENT", "RAGFILES"), help="Set RAG files for agent (comma-separated)")
+    management.add_argument("--search-knowledge", nargs=2, metavar=("RAGFILE", "QUERY"), help="Search in RAG file")
+    
+    # Personality management
+    management.add_argument("--list-personalities", action="store_true", help="List available personalities")
+    management.add_argument("--set-personality", nargs=2, metavar=("AGENT", "PERSONALITY"), help="Set personality for agent")
+    
+    # System commands
+    management.add_argument("--setup", action="store_true", help="Run initial setup")
+    management.add_argument("--version", action="store_true", help="Show version information")
+    
+    return parser
+
+
+def handle_management_commands(args):
+    """Handle management commands."""
+    agent_manager = AgentManager()
+    voice_manager = VoiceManager()
+    model_manager = ModelManager()
+    rag_manager = RAGKnowledgeManager()
+    assistant_config = AssistantConfig()
+    
+    # Agent management
+    if args.create_agent:
+        return agent_manager.create_agent_interactive()
+    
+    if args.list_agents:
+        return agent_manager.list_agents()
+    
+    if args.show_agent:
+        return agent_manager.show_agent_info(args.show_agent)
+    
+    if args.clone_agent:
+        source, target = args.clone_agent
+        return agent_manager.clone_agent(source, target)
+    
+    if args.delete_agent:
+        return agent_manager.delete_agent(args.delete_agent)
+    
+    if args.configure:
+        return agent_manager.configure_agent_interactive(args.configure)
+    
+    # Model management
+    if args.list_models:
+        return model_manager.list_all_models()
+    
+    if args.download_model:
+        return model_manager.download_model(args.download_model)
+    
+    if args.remove_model:
+        return model_manager.remove_model(args.remove_model)
+    
+    if args.model_info:
+        return model_manager.show_model_info(args.model_info)
+    
+    if args.set_model:
+        agent, model = args.set_model
+        return agent_manager.set_agent_model(agent, model)
+    
+    if args.clean_hf_cache:
+        return model_manager.clean_hf_cache()
+    
+    # Voice management
+    if args.list_voices:
+        return voice_manager.display_tts_voices()
+    
+    if args.test_voice:
+        return voice_manager.test_tts_voice(args.test_voice)
+    
+    if args.set_voice:
+        agent, voice_id = args.set_voice
+        return voice_manager.set_assistant_voice(agent, voice_id)
+    
+    if args.list_speech_backends:
+        return voice_manager.display_sr_models()
+    
+    if args.set_speech_backend:
+        agent, backend = args.set_speech_backend
+        return voice_manager.set_assistant_speech_backend(agent, backend)
+    
+    if args.configure_voice:
+        return voice_manager.configure_voice_interactive(args.configure_voice)
+    
+    # Knowledge management
+    if args.index_knowledge:
+        source_dir, ragfile_name = args.index_knowledge
+        return rag_manager.index_directory(Path(source_dir), ragfile_name)
+    
+    if args.list_knowledge:
+        ragfiles = rag_manager.list_ragfiles()
+        if ragfiles:
+            from rich.table import Table
+            table = Table(title="Available RAG Knowledge Files")
+            table.add_column("Name", style="cyan")
+            table.add_column("Size", style="green")
+            table.add_column("Files", style="yellow")
+            table.add_column("Created", style="dim")
+            
+            for ragfile in ragfiles:
+                table.add_row(
+                    ragfile["name"],
+                    ragfile["size"],
+                    str(ragfile["file_count"]),
+                    ragfile["created_at"][:10]
+                )
+            console.print(table)
+        else:
+            console.print("[yellow]⚠️ No RAG files found[/]")
+        return True
+    
+    if args.delete_knowledge:
+        return rag_manager.delete_ragfile(args.delete_knowledge)
+    
+    if args.set_rag:
+        agent, ragfiles_str = args.set_rag
+        ragfiles = [f.strip() for f in ragfiles_str.split(",")]
+        return agent_manager.set_agent_rag(agent, ragfiles)
+    
+    if args.search_knowledge:
+        ragfile, query = args.search_knowledge
+        results = rag_manager.search_knowledge(ragfile, query)
+        
+        if results:
+            console.print(f"[cyan]🔍 Search results for '{query}' in {ragfile}:[/]\n")
+            for i, result in enumerate(results[:5], 1):
+                console.print(f"[bold]{i}. {result['file_path']}[/]")
+                console.print(f"[dim]Similarity: {result['similarity']:.3f}[/]")
+                console.print(f"{result['content'][:200]}...\n")
+        else:
+            console.print(f"[yellow]⚠️ No results found for '{query}'[/]")
+        return True
+    
+    # Personality management
+    if args.list_personalities:
+        from library.personality_cfg import PersonalityConfig
+        personality_config = PersonalityConfig()
+        return personality_config.display_personalities()
+    
+    if args.set_personality:
+        agent, personality = args.set_personality
+        return agent_manager.set_agent_personality(agent, personality)
+    
+    # System commands
+    if args.setup:
+        return run_setup()
+    
+    if args.version:
+        console.print("[bold cyan]AI Assistant System v2.0[/]")
+        console.print("Modular architecture with RAG, Voice, and Image Generation")
+        return True
+    
+    return False
+
+
+def run_assistant_session(args):
+    """Run an assistant session."""
+    if not args.assistant_name:
+        console.print("[red]❌ Assistant name required[/]")
+        console.print("Use --create-agent to create a new assistant")
+        console.print("Use --list-agents to see available assistants")
+        return False
+    
+    # Load assistant configuration
+    assistant_config = AssistantConfig()
+    
+    # Use current directory if no working directory specified
+    # Get the user's original working directory from install script
+    import os
+    
+    # The install script sets ORIGINAL_CWD to the directory where the user ran coder
+    original_cwd = os.environ.get('ORIGINAL_CWD')
+    if original_cwd and Path(original_cwd).exists():
+        user_cwd = Path(original_cwd)
+    else:
+        # Fallback to current Python working directory
+        user_cwd = Path.cwd()
+    
+    session_working_dir = args.working_dir or user_cwd
+    
+    
+    session_config = assistant_config.load_assistant_for_session(
+        args.assistant_name, 
+        session_working_dir
+    )
+    
+    if not session_config:
+        # Auto-create assistant with default settings
+        console.print(f"[yellow]⚠️ Assistant '{args.assistant_name}' not found. Creating with default settings...[/]")
+        
+        # Determine default model and personality based on mode
+        default_model = args.model or "qwen2.5-coder:3b"
+        default_personality = "coder"
+        
+        # Use the user's current directory for auto-creation
+        working_dir = session_working_dir
+        
+        # Create assistant with default configuration
+        success = assistant_config.create_assistant(
+            assistant_name=args.assistant_name,
+            model=default_model,
+            personality=default_personality,
+            working_dir=working_dir
+        )
+        
+        if not success:
+            console.print(f"[red]❌ Failed to create assistant '{args.assistant_name}'[/]")
+            return False
+        
+        # Load the newly created assistant
+        session_config = assistant_config.load_assistant_for_session(
+            args.assistant_name, 
+            session_working_dir
+        )
+        
+        if not session_config:
+            console.print(f"[red]❌ Failed to load newly created assistant '{args.assistant_name}'[/]")
+            return False
+    
+    # Override model if specified
+    if args.model:
+        session_config["assistant"]["model"] = args.model
+        console.print(f"[cyan]🔄 Using model for this session: {args.model}[/]")
+    
+    # Run based on mode
+    if args.mode == "chat":
+        return run_chat_session(session_config, args)
+    elif args.mode == "speech":
+        return run_speech_session(session_config, args)
+    elif args.mode == "image":
+        return run_image_session(session_config, args)
+    
+    return False
+
+
+def run_chat_session(session_config, args):
+    """Run chat session."""
+    from library.conversation.chat_manager import ChatManager
+    from library.coding.file_ops import FileOperations
+    
+    assistant_name = session_config["assistant"]["name"]
+    model = session_config["assistant"]["model"]
+    working_dir = Path(session_config["session"]["working_dir"])
+    context_dir = Path(session_config["paths"]["context_dir"])
     
     console.print(Panel.fit(
-        f"[bold cyan]{assistant.name}[/] - [dim]{assistant.model}[/]\n"
-        f"User: [green]{user_name}[/] | Mode: [green]{mode_name}[/]\n"
-        f"Directory: [dim]{assistant.working_dir}[/]\n"
-        f"Commands: 'exit', 'reset', 'config', 'who am i', 'set user [name]'",
+        f"[bold cyan]{assistant_name}[/] - Chat Mode\n"
+        f"Model: [green]{model}[/]\n"
+        f"Working Directory: [yellow]{working_dir}[/]\n"
+        f"Commands: 'exit', 'reset', '/dir=<path>' to change directory",
         title="🤖 AI Assistant"
     ))
     
-    # Special handling for speech mode
-    if mode_name == 'speech':
-        speech_interactive_mode(assistant, auto_confirm)
-        return
+    # Initialize chat manager
+    chat_manager = ChatManager(model, assistant_name, context_dir)
     
-    # Regular chat mode
+    # Initialize file operations if enabled
+    file_ops = None
+    if session_config.get("capabilities", {}).get("file_operations") and not args.no_file_ops:
+        file_ops = FileOperations(working_dir)
+        console.print("[dim]📁 File operations enabled[/]")
+    
+    # One-shot query mode
+    if args.query:
+        system_prompt = session_config.get("personality", {}).get("system_prompt", "")
+        response = chat_manager.send_message(args.query, system_prompt)
+        
+        # Handle file operations
+        if file_ops and response:
+            code_blocks = file_ops.parse_code_blocks(response)
+            if code_blocks:
+                file_ops.apply_code_changes(code_blocks, args.auto_confirm)
+        
+        return True
+    
+    # Interactive mode
+    system_prompt = session_config.get("personality", {}).get("system_prompt", "")
+    user_name = session_config["assistant"]["user_name"]
+    
     while True:
         try:
-            # Update user name in case it changed
-            current_user = assistant.get_user_name()
-            user_input = input(f"\n💬 [{current_user}]: ").strip()
+            user_input = input(f"\n💬 [{user_name}] ({working_dir.name}): ").strip()
             
             if user_input.lower() in ['exit', 'quit', 'q']:
-                console.print(f"[dim]Goodbye from {assistant.name}! 👋[/]")
+                console.print(f"[dim]Goodbye! 👋[/]")
                 break
             
             if user_input.lower() == 'reset':
-                assistant.reset_context()
+                chat_manager.clear_conversation()
                 continue
             
-            if user_input.lower() == 'config':
-                show_config(assistant)
+            # Handle directory change command
+            if user_input.startswith('/dir='):
+                new_dir_str = user_input[5:].strip()
+                try:
+                    # Handle different path types
+                    if new_dir_str.startswith('~/'):
+                        # Expand home directory
+                        new_dir = Path(new_dir_str).expanduser()
+                    elif new_dir_str.startswith('./') or new_dir_str.startswith('../'):
+                        # Relative paths - relative to current working directory
+                        new_dir = working_dir / new_dir_str
+                    elif new_dir_str == '.':
+                        # Stay in current directory
+                        new_dir = working_dir
+                    elif new_dir_str == '~':
+                        # Go to home directory
+                        new_dir = Path.home()
+                    else:
+                        # Absolute path or relative without ./
+                        new_dir = Path(new_dir_str)
+                        if not new_dir.is_absolute():
+                            # Make relative to current working directory
+                            new_dir = working_dir / new_dir_str
+                    
+                    new_dir = new_dir.resolve()
+                    
+                    if new_dir.exists() and new_dir.is_dir():
+                        working_dir = new_dir
+                        # Update file operations working directory
+                        if file_ops:
+                            file_ops.working_dir = working_dir
+                        console.print(f"[green]📁 Changed working directory to: {working_dir}[/]")
+                    else:
+                        console.print(f"[red]❌ Directory not found: {new_dir}[/]")
+                except Exception as e:
+                    console.print(f"[red]❌ Invalid directory path: {e}[/]")
                 continue
             
             if not user_input:
                 continue
             
-            # Process input through the assistant
-            assistant.process_input(user_input, auto_confirm=auto_confirm)
+            # Send message and get response
+            response = chat_manager.send_message(user_input, system_prompt)
+            
+            # Handle file operations
+            if file_ops and response:
+                code_blocks = file_ops.parse_code_blocks(response)
+                if code_blocks:
+                    file_ops.apply_code_changes(code_blocks, args.auto_confirm)
             
         except KeyboardInterrupt:
-            console.print(f"\n[dim]Goodbye from {assistant.name}! 👋[/]")
+            console.print(f"\n[dim]Goodbye! 👋[/]")
             break
         except Exception as e:
             console.print(f"[red]❌ Error: {e}[/]")
+    
+    return True
 
-def speech_interactive_mode(assistant, auto_confirm: bool = False):
-    """Special interactive mode for speech assistant with htop-like UI"""
-    from assistant_base import SpeechAssistant
+
+def run_speech_session(session_config, args):
+    """Run speech session with voice interaction."""
+    assistant_name = session_config["assistant"]["name"]
+    model = session_config["assistant"]["model"]
+    working_dir = Path(session_config["session"]["working_dir"])
+    context_dir = Path(session_config["paths"]["context_dir"])
     
-    if not isinstance(assistant, SpeechAssistant):
-        console.print("[red]❌ Not a speech assistant[/]")
-        return
+    # Get speech configuration
+    voice_config = session_config.get("voice", {})
+    speech_backend = voice_config.get("speech_backend", "google")
+    voice_id = voice_config.get("voice_id", "")
+    voice_name = voice_config.get("voice_name", "Default")
+    speech_rate = voice_config.get("speech_rate", 200)
     
-    # Initial greeting setup
-    assistant._add_chat_line("🎤 Voice Mode Active", "bold green")
-    assistant._add_chat_line("Say 'exit' or press Ctrl+C to quit", "dim")
-    assistant._add_chat_line("Say 'reset' to clear conversation history", "dim")
+    console.print(Panel.fit(
+        f"[bold cyan]{assistant_name}[/] - Speech Mode\n"
+        f"Model: [green]{model}[/]\n"
+        f"Working Directory: [yellow]{working_dir}[/]\n"
+        f"Speech Backend: [cyan]{speech_backend}[/]\n"
+        f"Voice: [magenta]{voice_name} (ID: {voice_id})[/]\n"
+        f"Speech Rate: [blue]{speech_rate}[/]\n"
+        f"Commands: 'exit', 'reset', or speak naturally",
+        title="🎤 Speech Assistant"
+    ))
     
-    # Initial greeting
-    greeting = f"Hello {assistant.get_user_name()}! I'm {assistant.name}. How can I help you today?"
-    assistant._add_chat_line(f"🤖 {assistant.name}: {greeting}", "cyan")
-    assistant._update_status("🔊 Initial greeting...")
-    assistant.speak(greeting)
+    # Check if speech dependencies are available
+    try:
+        import speech_recognition as sr
+        import pyttsx3
+    except ImportError:
+        console.print("[red]❌ Speech dependencies not installed[/]")
+        console.print("[dim]Install with: python3 install.py --install-speech[/]")
+        return False
+    
+    # Initialize speech components
+    from library.conversation.chat_manager import ChatManager
+    
+    # Initialize chat manager
+    chat_manager = ChatManager(model, assistant_name, context_dir)
+    
+    # Initialize speech recognition
+    recognizer = sr.Recognizer()
+    microphone = sr.Microphone()
+    
+    # Initialize text-to-speech
+    tts_engine = pyttsx3.init()
+    
+    # Configure voice if available
+    voice_config = session_config.get("voice", {})
+    if voice_config.get("voice_id"):
+        try:
+            tts_engine.setProperty('voice', voice_config["voice_id"])
+        except:
+            pass  # Voice not available
+    
+    # Set speech rate
+    speech_rate = voice_config.get("speech_rate", 200)
+    tts_engine.setProperty('rate', speech_rate)
+    
+    console.print("[green]🎤 Speech mode ready! Start speaking...[/]")
+    console.print("[dim]Say 'exit', 'quit', or 'reset' for commands[/]")
+    
+    # Calibrate microphone for ambient noise
+    with microphone as source:
+        console.print("[dim]Calibrating for ambient noise...[/]", end="")
+        recognizer.adjust_for_ambient_noise(source)
+        console.print(" Done!")
+    
+    system_prompt = session_config.get("personality", {}).get("system_prompt", "")
+    user_name = session_config["assistant"]["user_name"]
     
     while True:
         try:
-            assistant._update_status("🎤 Ready - say something...")
+            # Listen for speech
+            console.print(f"\n🎤 [{user_name}] Listening...", end="")
             
-            # Use the new UI-aware process_input method
-            response = assistant.process_input(auto_confirm=auto_confirm)
+            with microphone as source:
+                # Listen for audio with timeout
+                audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
             
-            # The process_input method handles the UI updates now
+            console.print(" Processing...", end="")
+            
+            # Recognize speech
+            try:
+                user_input = recognizer.recognize_google(audio)
+                console.print(f" Heard: '{user_input}'")
+            except sr.UnknownValueError:
+                console.print(" Could not understand audio")
+                continue
+            except sr.RequestError as e:
+                console.print(f" Error with speech service: {e}")
+                continue
+            
+            # Handle commands
+            if user_input.lower() in ['exit', 'quit', 'goodbye', 'bye']:
+                console.print("Goodbye! 👋")
+                break
+            
+            if user_input.lower() == 'reset':
+                chat_manager.clear_conversation()
+                console.print("Conversation reset")
+                continue
+            
+            # Get AI response
+            response = chat_manager.send_message(user_input, system_prompt)
+            
             if response:
-                # Check for exit commands within the response handling
-                last_user_input = ""
-                if assistant.chat_lines:
-                    for line in reversed(assistant.chat_lines):
-                        if line.plain.startswith("👤 You:"):
-                            last_user_input = line.plain[7:].strip().lower()
-                            break
+                console.print(f"🤖 [{assistant_name}]: {response}")
                 
-                if last_user_input in ['exit', 'quit', 'goodbye', 'bye']:
-                    farewell = f"Goodbye {assistant.get_user_name()}! It was nice talking with you."
-                    assistant._add_chat_line(f"🤖 {assistant.name}: {farewell}", "cyan")
-                    assistant._update_status("🔊 Saying goodbye...")
-                    assistant.speak(farewell)
-                    break
-                
-                if last_user_input == 'reset':
-                    assistant.reset_context()
-                    assistant._add_chat_line("✅ Conversation history cleared", "yellow")
-                    assistant.speak("Conversation history cleared.")
-                    continue
+                # Speak the response
+                tts_engine.say(response)
+                tts_engine.runAndWait()
             
+        except sr.WaitTimeoutError:
+            console.print(" Timeout - no speech detected")
+            continue
         except KeyboardInterrupt:
-            print("\n")
-            console.print("\n[yellow]👋 Speech mode ended[/]")
+            console.print("\nGoodbye! 👋")
             break
         except Exception as e:
-            console.print(f"\n[red]❌ Error: {e}[/]")
-            assistant.speak("I encountered an error. Let me try again.")
-
-def show_config(assistant: BaseAssistant):
-    """Show assistant configuration"""
-    config_table = Table(title=f"{assistant.name} Configuration")
-    config_table.add_column("Setting", style="cyan")
-    config_table.add_column("Value", style="green")
+            console.print(f"[red]❌ Error: {e}[/]")
     
-    for key, value in assistant.config.items():
-        if isinstance(value, list):
-            value = ", ".join(value)
-        config_table.add_row(key, str(value))
-    
-    console.print(config_table)
-
-def list_voices():
-    """List available TTS voices"""
+    # Clean up
     try:
-        from voice_selector import list_available_voices
-        list_available_voices()
-    except ImportError:
-        console.print("[red]❌ voice_selector.py not found[/]")
+        tts_engine.stop()
+    except:
+        pass
+    
+    return True
 
-def set_voice(assistant_name: str, voice_id: str):
-    """Set voice for an assistant"""
-    try:
-        from voice_selector import list_available_voices, set_assistant_voice
-        voices = list_available_voices()
-        
-        try:
-            voice_index = int(voice_id)
-            if 0 <= voice_index < len(voices):
-                voice = voices[voice_index]
-                if set_assistant_voice(assistant_name, voice.id, voice.name):
-                    console.print(f"[green]✅ Voice set successfully![/]")
-                else:
-                    console.print(f"[red]❌ Failed to set voice[/]")
-            else:
-                console.print(f"[red]❌ Invalid voice ID. Use 0-{len(voices)-1}[/]")
-        except ValueError:
-            console.print("[red]❌ Voice ID must be a number[/]")
-            
-    except ImportError:
-        console.print("[red]❌ voice_selector.py not found[/]")
 
-def show_models():
-    """Show Ollama models and cache information"""
-    try:
-        import ollama
-        import subprocess
-        import json
-        from pathlib import Path
-        
-        console.print("[bold cyan]🤖 Ollama Models[/]")
-        
-        # Get ollama models
-        try:
-            models = ollama.list()
-            model_table = Table(title="Installed Models")
-            model_table.add_column("Name", style="cyan")
-            model_table.add_column("Size", style="green")
-            model_table.add_column("Modified", style="dim")
-            
-            for model in models.get('models', []):
-                name = model.get('name', 'Unknown')
-                size = model.get('size', 0)
-                # Convert size to human readable
-                size_str = f"{size / 1024 / 1024 / 1024:.1f} GB" if size > 0 else "Unknown"
-                modified = model.get('modified_at', 'Unknown')
-                if 'T' in str(modified):
-                    modified = str(modified).split('T')[0]  # Just date part
-                
-                model_table.add_row(name, size_str, str(modified))
-            
-            console.print(model_table)
-            
-        except Exception as e:
-            console.print(f"[red]❌ Error getting Ollama models: {e}[/]")
-        
-        # Show HuggingFace cache info if available
-        console.print(f"\n[bold cyan]💾 HuggingFace Cache[/]")
-        
-        hf_cache_dir = Path.home() / ".cache" / "huggingface"
-        if hf_cache_dir.exists():
-            try:
-                # Calculate cache size
-                total_size = 0
-                model_count = 0
-                
-                for item in hf_cache_dir.rglob("*"):
-                    if item.is_file():
-                        total_size += item.stat().st_size
-                        if item.suffix in ['.bin', '.safetensors', '.onnx']:
-                            model_count += 1
-                
-                cache_size = f"{total_size / 1024 / 1024 / 1024:.1f} GB"
-                
-                cache_table = Table()
-                cache_table.add_column("Location", style="cyan")
-                cache_table.add_column("Size", style="green")
-                cache_table.add_column("Files", style="yellow")
-                
-                cache_table.add_row(str(hf_cache_dir), cache_size, str(model_count))
-                console.print(cache_table)
-                
-            except Exception as e:
-                console.print(f"[yellow]⚠️ Could not read HF cache: {e}[/]")
-        else:
-            console.print("[dim]No HuggingFace cache found[/]")
-            
-    except ImportError:
-        console.print("[red]❌ Ollama not installed[/]")
-
-def list_speech_backends():
-    """List available speech recognition backends"""
-    console.print("[bold cyan]🎤 Speech Recognition Backends[/]")
+def run_image_session(session_config, args):
+    """Run image generation session."""
+    if not args.prompt:
+        console.print("[red]❌ Image prompt required for image mode[/]")
+        console.print("Use: --prompt 'Your image description'")
+        return False
     
-    backend_table = Table(title="Available Backends")
-    backend_table.add_column("Backend", style="cyan")
-    backend_table.add_column("Type", style="green")
-    backend_table.add_column("Status", style="yellow")
-    backend_table.add_column("Notes", style="dim")
+    from library.image_generation.generation import ImageGenerator
     
-    # Check Google
-    try:
-        import speech_recognition as sr
-        backend_table.add_row("google", "Online", "✅ Available", "Requires internet")
-    except ImportError:
-        backend_table.add_row("google", "Online", "❌ Missing", "pip install speechrecognition")
+    working_dir = Path(session_config["session"]["working_dir"])
+    images_dir = working_dir / session_config["image"]["output_subdir"]
+    models = session_config["image"]["models"]
     
-    # Check Whisper
-    try:
-        import whisper
-        backend_table.add_row("whisper", "Local", "✅ Available", "Best accuracy, slower")
-    except ImportError:
-        backend_table.add_row("whisper", "Local", "❌ Missing", "pip install openai-whisper")
+    console.print(f"[cyan]🎨 Generating image: '{args.prompt}'[/]")
+    console.print(f"[dim]Output directory: {images_dir}[/]")
     
-    # Check Vosk
-    try:
-        import vosk
-        backend_table.add_row("vosk", "Local", "✅ Available", "Fast, needs model download")
-    except ImportError:
-        backend_table.add_row("vosk", "Local", "❌ Missing", "pip install vosk")
+    # Initialize image generator
+    generator = ImageGenerator(models, images_dir)
     
-    console.print(backend_table)
-    
-    console.print("\n[bold yellow]💡 Usage:[/]")
-    console.print("  --set-speech-backend [assistant] [backend]")
-    console.print("  Example: --set-speech-backend jeany whisper")
-
-def set_speech_backend(assistant_name: str, backend: str):
-    """Set speech recognition backend for an assistant"""
-    valid_backends = ['whisper', 'vosk','google']
-    
-    if backend not in valid_backends:
-        console.print(f"[red]❌ Invalid backend. Choose from: {', '.join(valid_backends)}[/]")
-        return
-    
-    context_dir = Path(".ai_context") / assistant_name
-    config_file = context_dir / "config.json"
-    
-    if not config_file.exists():
-        console.print(f"[red]❌ Assistant '{assistant_name}' not found[/]")
-        console.print(f"Create it first: python3 main.py qwen2.5-coder:3b {assistant_name} speech")
-        return
-    
-    # Load and update config
-    config = json.loads(config_file.read_text())
-    config['speech_backend'] = backend
-    
-    # Add backend-specific settings
-    if backend == 'whisper':
-        config['whisper_model'] = config.get('whisper_model', 'base')
-    elif backend == 'vosk':
-        config['vosk_model_path'] = config.get('vosk_model_path', './vosk-model')
-    
-    # Save updated config
-    config_file.write_text(json.dumps(config, indent=2))
-    
-    console.print(f"[green]✅ Set {assistant_name}'s speech backend to: {backend}[/]")
-    
-    # Show installation instructions if needed
-    if backend == 'whisper':
-        try:
-            import whisper
-        except ImportError:
-            console.print("[yellow]💡 Install Whisper: pip install openai-whisper[/]")
-    elif backend == 'vosk':
-        try:
-            import vosk
-        except ImportError:
-            console.print("[yellow]💡 Install Vosk: pip install vosk[/]")
-            console.print("[dim]Download models from: https://alphacephei.com/vosk/models[/]")
-
-def get_hf_cache_dir():
-    """Get HuggingFace cache directory"""
-    return Path.home() / ".cache" / "huggingface" / "hub"
-
-def list_cached_image_models():
-    """List all cached image generation models"""
-    cache_dir = get_hf_cache_dir()
-    
-    if not cache_dir.exists():
-        console.print("[yellow]⚠️ HuggingFace cache directory not found[/]")
-        return []
-    
-    models = []
-    
-    # Look for model directories
-    for item in cache_dir.iterdir():
-        if item.is_dir() and ("stable-diffusion" in item.name.lower() or 
-                              "tiny-sd" in item.name.lower() or
-                              "openjourney" in item.name.lower() or
-                              "dreamlike" in item.name.lower() or
-                              "waifu" in item.name.lower()):
-            
-            # Calculate size
-            total_size = 0
-            try:
-                for file in item.rglob("*"):
-                    if file.is_file():
-                        total_size += file.stat().st_size
-            except:
-                total_size = 0
-            
-            models.append({
-                'name': item.name,
-                'path': item,
-                'size': total_size
-            })
-    
-    return models
-
-def format_size(size_bytes):
-    """Format bytes to human readable"""
-    if size_bytes == 0:
-        return "0 B"
-    
-    for unit in ['B', 'KB', 'MB', 'GB']:
-        if size_bytes < 1024:
-            return f"{size_bytes:.1f} {unit}"
-        size_bytes /= 1024
-    return f"{size_bytes:.1f} TB"
-
-def list_image_models():
-    """List cached image generation models"""
-    models = list_cached_image_models()
-    
-    if not models:
-        console.print("[yellow]⚠️ No image generation models found in cache[/]")
-        console.print("[dim]Models will be downloaded automatically when first used[/]")
-        return
-    
-    table = Table(title="Cached Image Generation Models")
-    table.add_column("Model", style="cyan")
-    table.add_column("Size", style="green")
-    table.add_column("Status", style="yellow")
-    
-    for model in models:
-        # Extract model name from full path name
-        display_name = model['name']
-        if 'models--' in display_name:
-            parts = display_name.split('models--')[1].replace('--', '/')
-            display_name = parts
-        
-        table.add_row(
-            display_name,
-            format_size(model['size']),
-            "✅ Cached"
-        )
-    
-    console.print(table)
-
-def remove_image_model(model_name: str):
-    """Remove image model from cache"""
-    models = list_cached_image_models()
-    
-    # Find matching models
-    matches = [m for m in models if model_name.lower() in m['name'].lower()]
-    
-    if not matches:
-        console.print(f"[red]❌ No models found matching '{model_name}'[/]")
-        return
-    
-    for model in matches:
-        display_name = model['name']
-        if 'models--' in display_name:
-            parts = display_name.split('models--')[1].replace('--', '/')
-            display_name = parts
-            
-        console.print(f"[yellow]Removing:[/] {display_name}")
-        console.print(f"[dim]Size: {format_size(model['size'])}[/]")
-        
-        try:
-            import shutil
-            shutil.rmtree(model['path'])
-            console.print(f"[green]✅ Removed {display_name} ({format_size(model['size'])} freed)[/]")
-        except Exception as e:
-            console.print(f"[red]❌ Failed to remove {display_name}: {e}[/]")
-
-def preload_image_model(model_name: str):
-    """Preload/download image model"""
-    console.print(f"[cyan]📥 Downloading model: {model_name}[/]")
-    
-    try:
-        from diffusers import StableDiffusionPipeline
-        import torch
-        
-        # Load the model (this will download and cache it)
-        pipe = StableDiffusionPipeline.from_pretrained(
-            model_name,
-            torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
-            use_safetensors=True
-        )
-        
-        console.print(f"[green]✅ Successfully downloaded {model_name}[/]")
-        console.print(f"[dim]Model is now cached and ready for use[/]")
-        
-    except Exception as e:
-        console.print(f"[red]❌ Failed to download {model_name}: {e}[/]")
-
-def set_image_models(assistant_name: str, models_str: str):
-    """Set image model priority for assistant"""
-    models = [m.strip() for m in models_str.split(',')]
-    
-    context_dir = Path(".ai_context") / assistant_name
-    config_file = context_dir / "config.json"
-    
-    if not config_file.exists():
-        console.print(f"[red]❌ Assistant '{assistant_name}' not found[/]")
-        console.print(f"Create it first: python3 main.py qwen2.5-coder:3b {assistant_name} image")
-        return
-    
-    # Load and update config
-    config = json.loads(config_file.read_text())
-    config['image_models'] = models
-    
-    # Save updated config
-    config_file.write_text(json.dumps(config, indent=2))
-    
-    console.print(f"[green]✅ Set {assistant_name}'s image model priority:[/]")
-    for i, model in enumerate(models, 1):
-        console.print(f"  {i}. {model}")
-    
-    console.print(f"\n[dim]Models will be tried in this order when generating images[/]")
-
-def enable_rag(assistant_name: str):
-    """Enable RAG for an assistant"""
-    context_dir = Path(".ai_context") / assistant_name
-    config_file = context_dir / "config.json"
-    
-    if not config_file.exists():
-        console.print(f"[red]❌ Assistant '{assistant_name}' not found[/]")
-        console.print(f"Create it first: python3 main.py qwen2.5-coder:3b {assistant_name} chat")
-        return
-    
-    # Load and update config
-    config = json.loads(config_file.read_text())
-    config['rag_enabled'] = True
-    
-    # Save updated config
-    config_file.write_text(json.dumps(config, indent=2))
-    
-    console.print(f"[green]✅ RAG enabled for {assistant_name}[/]")
-    console.print("[dim]Install dependencies if needed: pip install sentence-transformers numpy[/]")
-
-def disable_rag(assistant_name: str):
-    """Disable RAG for an assistant"""
-    context_dir = Path(".ai_context") / assistant_name
-    config_file = context_dir / "config.json"
-    
-    if not config_file.exists():
-        console.print(f"[red]❌ Assistant '{assistant_name}' not found[/]")
-        return
-    
-    # Load and update config
-    config = json.loads(config_file.read_text())
-    config['rag_enabled'] = False
-    
-    # Save updated config
-    config_file.write_text(json.dumps(config, indent=2))
-    
-    console.print(f"[green]✅ RAG disabled for {assistant_name}[/]")
-
-def show_rag_status(assistant_name: str):
-    """Show RAG status for an assistant"""
-    context_dir = Path(".ai_context") / assistant_name
-    config_file = context_dir / "config.json"
-    
-    if not config_file.exists():
-        console.print(f"[red]❌ Assistant '{assistant_name}' not found[/]")
-        return
-    
-    config = json.loads(config_file.read_text())
-    rag_enabled = config.get('rag_enabled', False)
-    
-    console.print(f"[bold cyan]📚 RAG Status for {assistant_name}[/]")
-    console.print(f"Status: {'✅ Enabled' if rag_enabled else '❌ Disabled'}")
-    
-    if rag_enabled:
-        # Try to get knowledge base stats
-        try:
-            from rag_system import RAGKnowledgeBase
-            kb_dir = Path(".ai_context") / "knowledge"
-            kb = RAGKnowledgeBase(kb_dir)
-            stats = kb.get_stats()
-            
-            console.print(f"Documents: {stats['total_documents']}")
-            console.print(f"Embedded: {stats['embedded_documents']}")
-            console.print(f"Sources: {stats['unique_sources']}")
-            console.print(f"Model: {stats['embedding_model']}")
-            
-        except Exception as e:
-            console.print(f"[yellow]⚠️ Could not load knowledge base: {e}[/]")
-
-def index_project(assistant_name: str, project_path: str):
-    """Index a project for RAG"""
-    path = Path(project_path)
-    if not path.exists():
-        console.print(f"[red]❌ Project path not found: {project_path}[/]")
-        return
-    
-    try:
-        from rag_system import RAGKnowledgeBase
-        
-        kb_dir = Path(".ai_context") / "knowledge"
-        kb = RAGKnowledgeBase(kb_dir)
-        
-        console.print(f"[cyan]📚 Indexing project for {assistant_name}...[/]")
-        kb.index_codebase(path)
-        
-        stats = kb.get_stats()
-        console.print(f"[green]✅ Indexing complete![/]")
-        console.print(f"Total documents: {stats['total_documents']}")
-        
-    except ImportError:
-        console.print("[red]❌ RAG dependencies not installed[/]")
-        console.print("[dim]Install with: pip install sentence-transformers numpy[/]")
-    except Exception as e:
-        console.print(f"[red]❌ Indexing failed: {e}[/]")
-
-def main():
-    parser = argparse.ArgumentParser(
-        description="Multi-modal AI Assistant",
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  %(prog)s qwen2.5-coder:3b coder chat                    # Text chat with file ops
-  %(prog)s llama3.2:3b advisor chat --query "Help me"     # One-shot query
-  %(prog)s qwen2.5-coder:7b designer image               # Image mode (future)
-  %(prog)s --list-models                                  # List available models
-        """
+    # Generate image
+    result = generator.generate_image(
+        prompt=args.prompt,
+        width=args.width,
+        height=args.height,
+        model_name=models[0] if models else None
     )
     
-    # Main arguments
-    parser.add_argument("model", nargs="?", help="Ollama model to use (e.g., qwen2.5-coder:3b)")
-    parser.add_argument("name", nargs="?", help="Assistant name/persona")
-    parser.add_argument("mode", nargs="?", choices=["chat", "speech", "image"], 
-                       default="chat", help="Assistant mode (default: chat)")
+    if result:
+        console.print(f"[green]✅ Image generated successfully![/]")
+        return True
+    else:
+        console.print(f"[red]❌ Image generation failed[/]")
+        return False
+
+
+def run_setup():
+    """Run initial setup."""
+    console.print(Panel.fit(
+        "[bold cyan]🚀 AI Assistant Setup[/]\n\n"
+        "This will guide you through the initial setup process.",
+        title="Setup Wizard"
+    ))
     
-    # Options
-    parser.add_argument("--list-models", action="store_true", help="List available Ollama models")
-    parser.add_argument("--query", "-q", help="One-shot query instead of interactive mode")
-    parser.add_argument("--auto-confirm", "-y", action="store_true", help="Auto-confirm file operations")
-    parser.add_argument("--reset", action="store_true", help="Reset assistant context")
-    parser.add_argument("--working-dir", "-w", type=Path, help="Working directory (default: current)")
-    parser.add_argument("--config", action="store_true", help="Show assistant configuration")
-    parser.add_argument("--no-file-ops", action="store_true", help="Disable file operations for chat mode")
+    # Create default directories
+    Path("knowledge").mkdir(exist_ok=True)
+    Path("configuration").mkdir(exist_ok=True)
     
-    # Voice and model commands
-    parser.add_argument("--set-voice", nargs=2, metavar=("ASSISTANT", "VOICE_ID"), help="Set voice for assistant")
-    parser.add_argument("--list-voices", action="store_true", help="List available TTS voices")
-    parser.add_argument("--show-models", action="store_true", help="Show Ollama models and cache info")
-    parser.add_argument("--set-speech-backend", nargs=2, metavar=("ASSISTANT", "BACKEND"), 
-                       help="Set speech recognition backend (google/whisper/vosk)")
-    parser.add_argument("--list-speech-backends", action="store_true", help="List available speech recognition backends")
+    console.print("[green]✅ Created default directories[/]")
     
-    # Image model commands
-    parser.add_argument("--list-image-models", action="store_true", help="List cached image generation models")
-    parser.add_argument("--remove-image-model", metavar="MODEL_NAME", help="Remove image model from cache")
-    parser.add_argument("--preload-image-model", metavar="MODEL_NAME", help="Preload/download image model")
-    parser.add_argument("--set-image-models", nargs=2, metavar=("ASSISTANT", "MODELS"), 
-                       help="Set model priority for assistant (comma-separated list)")
+    # Ask if user wants to create first assistant
+    from rich.prompt import Confirm
+    if Confirm.ask("Would you like to create your first assistant?"):
+        agent_manager = AgentManager()
+        agent_manager.create_agent_interactive()
     
-    # RAG commands
-    parser.add_argument("--enable-rag", metavar="ASSISTANT", help="Enable RAG for assistant")
-    parser.add_argument("--disable-rag", metavar="ASSISTANT", help="Disable RAG for assistant")
-    parser.add_argument("--rag-status", metavar="ASSISTANT", help="Show RAG status for assistant")
-    parser.add_argument("--index-project", nargs=2, metavar=("ASSISTANT", "PATH"), help="Index project for RAG")
+    console.print(Panel.fit(
+        "[bold green]🎉 Setup Complete![/]\n\n"
+        "You can now use the AI assistant system.\n"
+        "Try: coder --list-agents",
+        title="Setup Complete"
+    ))
+    
+    return True
+
+
+def main():
+    """Main entry point."""
+    parser = create_parser()
+    
+    # Handle command shortcuts (legacy compatibility)
+    if len(sys.argv) >= 2:
+        command = sys.argv[1]
+        
+        # Management command shortcuts
+        shortcuts = {
+            "create-agent": ["--create-agent"],
+            "list-agents": ["--list-agents"],
+            "list-models": ["--list-models"],
+            "models": ["--list-models"],
+            "list-voices": ["--list-voices"],
+            "list-knowledge": ["--list-knowledge"],
+            "list-personalities": ["--list-personalities"],
+            "setup": ["--setup"],
+            "version": ["--version"]
+        }
+        
+        if command in shortcuts:
+            sys.argv = [sys.argv[0]] + shortcuts[command] + sys.argv[2:]
     
     args = parser.parse_args()
     
-    # Handle special commands
-    if args.list_models:
-        list_available_models()
-        return
-    
-    if args.list_voices:
-        list_voices()
-        return
-    
-    if args.show_models:
-        show_models()
-        return
-    
-    if args.set_voice:
-        assistant_name, voice_id = args.set_voice
-        set_voice(assistant_name, voice_id)
-        return
-    
-    if args.list_speech_backends:
-        list_speech_backends()
-        return
-    
-    if args.set_speech_backend:
-        assistant_name, backend = args.set_speech_backend
-        set_speech_backend(assistant_name, backend)
-        return
-    
-    if args.list_image_models:
-        list_image_models()
-        return
-    
-    if args.remove_image_model:
-        remove_image_model(args.remove_image_model)
-        return
-    
-    if args.preload_image_model:
-        preload_image_model(args.preload_image_model)
-        return
-    
-    if args.set_image_models:
-        assistant_name, models = args.set_image_models
-        set_image_models(assistant_name, models)
-        return
-    
-    # RAG commands
-    if args.enable_rag:
-        enable_rag(args.enable_rag)
-        return
-    
-    if args.disable_rag:
-        disable_rag(args.disable_rag)
-        return
-    
-    if args.rag_status:
-        show_rag_status(args.rag_status)
-        return
-    
-    if args.index_project:
-        assistant_name, project_path = args.index_project
-        index_project(assistant_name, project_path)
-        return
-    
-    # Validate required arguments
-    if not args.model or not args.name:
-        console.print("[red]❌ Error: model and name are required[/]")
-        console.print("Example: python main.py qwen2.5-coder:3b coder chat")
-        console.print("Use --list-models to see available models")
-        parser.print_help()
-        return
-    
-    # Set working directory
-    working_dir = args.working_dir or Path.cwd()
-    if not working_dir.exists():
-        console.print(f"[red]❌ Working directory does not exist: {working_dir}[/]")
-        return
-    
     try:
-        # Create assistant
-        file_ops = not args.no_file_ops if args.mode == "chat" else False
-        if args.mode == "chat":
-            from assistant_base import ChatAssistant
-            assistant = ChatAssistant(args.model, args.name, working_dir, file_ops)
-        else:
-            assistant = create_assistant(args.model, args.name, args.mode, working_dir)
-        
-        # Handle special commands
-        if args.reset:
-            assistant.reset_context()
+        # Handle management commands first
+        if handle_management_commands(args):
             return
         
-        if args.config:
-            show_config(assistant)
-            return
-        
-        # Run in appropriate mode
-        if args.query:
-            # One-shot mode
-            console.print(f"[dim]Using {args.model} as {args.name} in {working_dir}[/]")
-            assistant.process_input(args.query, auto_confirm=args.auto_confirm)
+        # If no management command, run assistant session
+        if args.assistant_name:
+            run_assistant_session(args)
         else:
-            # Interactive mode
-            interactive_mode(assistant, args.auto_confirm)
+            # No assistant name and no management command - show help
+            parser.print_help()
     
     except KeyboardInterrupt:
         console.print("\n[dim]Interrupted by user[/]")
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/]")
-        console.print("[yellow]💡 Make sure Ollama is running and the model is installed[/]")
+        console.print("[yellow]💡 Make sure all dependencies are installed and Ollama is running[/]")
+
 
 if __name__ == "__main__":
     main()

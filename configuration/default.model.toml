@@ -1,0 +1,133 @@
+# Default Model Configurations
+# This file contains default settings for various AI models
+
+[models."qwen2.5-coder:3b"]
+name = "Qwen2.5 Coder 3B"
+type = "chat"
+provider = "ollama"
+description = "Specialized coding model optimized for programming tasks"
+context_window = 8192
+memory_usage = "low"
+recommended_for = ["programming", "code_analysis", "debugging"]
+capabilities = ["coding", "file_operations", "debugging"]
+
+[models."qwen2.5-coder:3b".parameters]
+temperature = 0.1
+max_tokens = 2048
+top_p = 0.9
+frequency_penalty = 0.0
+presence_penalty = 0.0
+
+[models."qwen2.5-coder:7b"]
+name = "Qwen2.5 Coder 7B"
+type = "chat"
+provider = "ollama"
+description = "Larger coding model with enhanced capabilities"
+context_window = 16384
+memory_usage = "medium"
+recommended_for = ["complex_programming", "system_design", "code_review"]
+capabilities = ["coding", "file_operations", "debugging", "architecture"]
+
+[models."qwen2.5-coder:7b".parameters]
+temperature = 0.1
+max_tokens = 4096
+top_p = 0.9
+frequency_penalty = 0.0
+presence_penalty = 0.0
+
+[models."llama3.2:3b"]
+name = "Llama 3.2 3B"
+type = "chat"
+provider = "ollama"
+description = "General-purpose conversational AI model"
+context_window = 8192
+memory_usage = "low"
+recommended_for = ["general_chat", "advice", "creative_writing"]
+capabilities = ["conversation", "general_knowledge", "reasoning"]
+
+[models."llama3.2:3b".parameters]
+temperature = 0.3
+max_tokens = 2048
+top_p = 0.9
+frequency_penalty = 0.0
+presence_penalty = 0.0
+
+[models."mistral:7b"]
+name = "Mistral 7B"
+type = "chat"
+provider = "ollama"
+description = "Efficient and capable general-purpose model"
+context_window = 8192
+memory_usage = "medium"
+recommended_for = ["analysis", "research", "problem_solving"]
+capabilities = ["conversation", "reasoning", "analysis"]
+
+[models."mistral:7b".parameters]
+temperature = 0.2
+max_tokens = 2048
+top_p = 0.9
+frequency_penalty = 0.0
+presence_penalty = 0.0
+
+# Image Generation Models
+[image_models."runwayml/stable-diffusion-v1-5"]
+name = "Stable Diffusion v1.5"
+type = "image_generation"
+provider = "huggingface"
+description = "Popular and reliable image generation model"
+memory_usage = "high"
+requires_gpu = true
+recommended_for = ["general_images", "art", "concept_art"]
+capabilities = ["text_to_image"]
+
+[image_models."runwayml/stable-diffusion-v1-5".parameters]
+width = 512
+height = 512
+num_inference_steps = 20
+guidance_scale = 7.5
+
+[image_models."stabilityai/stable-diffusion-2-1"]
+name = "Stable Diffusion v2.1"
+type = "image_generation"
+provider = "huggingface"
+description = "Improved version with better quality and capabilities"
+memory_usage = "very_high"
+requires_gpu = true
+recommended_for = ["high_quality_images", "detailed_art"]
+capabilities = ["text_to_image", "higher_resolution"]
+
+[image_models."stabilityai/stable-diffusion-2-1".parameters]
+width = 768
+height = 768
+num_inference_steps = 25
+guidance_scale = 7.5
+
+# Speech Recognition Models
+[speech_models.google]
+name = "Google Speech Recognition"
+type = "speech_to_text"
+provider = "google"
+description = "Cloud-based speech recognition service"
+requires_internet = true
+recommended_for = ["general_speech", "real_time_transcription"]
+capabilities = ["speech_to_text", "real_time"]
+
+[speech_models.google.parameters]
+language = "en-US"
+timeout = 10
+phrase_time_limit = 30
+
+[speech_models."whisper-base"]
+name = "OpenAI Whisper Base"
+type = "speech_to_text"
+provider = "openai"
+description = "Local speech recognition model"
+requires_internet = false
+memory_usage = "medium"
+recommended_for = ["offline_transcription", "multilingual_speech"]
+capabilities = ["speech_to_text", "multilingual", "offline"]
+
+[speech_models."whisper-base".parameters]
+model_size = "base"
+language = "auto"
+temperature = 0.0
