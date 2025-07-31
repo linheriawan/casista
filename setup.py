@@ -23,56 +23,86 @@ def run_command(cmd, description):
         console.print(f"[red]❌ {description} failed: {e.stderr}[/]")
         return False
 
-def install_requirements(pip_cmd: str, requirements_file: Path, group_name: str, required: bool = True):
-    """Install requirements from a specific group"""
-    console.print(f"[cyan]📦 Installing {group_name}...[/]")
+def parse_requirements(requirements_file: Path):
+    """Parse requirements.txt into groups"""
+    requirements = {"core": [], "speech": [], "rag": [], "documents": [], "development": [], "optional": []}
     
     try:
         with open(requirements_file, 'r') as f:
             lines = f.readlines()
         
-        # Parse requirements by group
         current_section = "core"
-        requirements = {"core": [], "speech": [], "rag": [], "development": [], "optional": []}
         
         for line in lines:
             line = line.strip()
-            if not line or line.startswith('#'):
-                if "Speech Dependencies" in line:
+            
+            # Skip empty lines and comments that don't define sections
+            if not line:
+                continue
+                
+            # Check for section headers in comments
+            if line.startswith('#'):
+                if "Core Dependencies" in line:
+                    current_section = "core"
+                elif "Speech Dependencies" in line:
                     current_section = "speech"
                 elif "RAG Dependencies" in line:
                     current_section = "rag"
+                elif "Document Processing" in line:
+                    current_section = "documents"
                 elif "Development" in line:
                     current_section = "development"
                 elif "Optional" in line:
                     current_section = "optional"
                 continue
             
-            if not line.startswith('#') and '>' in line:
+            # Skip commented out requirements
+            if line.startswith('#'):
+                continue
+                
+            # Add requirement to current section if it has a version specifier
+            if '>=' in line or '==' in line or '>' in line or '<' in line or '~' in line:
                 requirements[current_section].append(line)
         
-        # Install the requested group
-        if group_name.lower() in requirements and requirements[group_name.lower()]:
-            deps = ' '.join(requirements[group_name.lower()])
-            result = subprocess.run(f"{pip_cmd} install {deps}", shell=True, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                console.print(f"[green]✅ {group_name} dependencies installed[/]")
-                return True
-            else:
-                if required:
-                    console.print(f"[red]❌ {group_name} dependencies failed: {result.stderr}[/]")
-                    return False
-                else:
-                    console.print(f"[yellow]⚠️ {group_name} dependencies failed (optional)[/]")
-                    return True
-        else:
-            console.print(f"[yellow]⚠️ No {group_name} dependencies found[/]")
-            return True
-            
+        return requirements
+        
     except Exception as e:
-        console.print(f"[red]❌ Error installing {group_name}: {e}[/]")
-        return not required
+        console.print(f"[red]❌ Error parsing requirements: {e}[/]")
+        return requirements
+
+def install_requirements(pip_cmd: str, requirements_file: Path, group_name: str, required: bool = True):
+    """Install requirements from a specific group"""
+    console.print(f"[cyan]📦 Installing {group_name} dependencies...[/]")
+    
+    requirements = parse_requirements(requirements_file)
+    
+    # Install the requested group
+    if group_name.lower() in requirements and requirements[group_name.lower()]:
+        deps = requirements[group_name.lower()]
+        
+        # Install dependencies one by one for better error handling
+        failed_deps = []
+        for dep in deps:
+            result = subprocess.run(f"{pip_cmd} install '{dep}'", shell=True, capture_output=True, text=True)
+            if result.returncode != 0:
+                failed_deps.append(dep)
+                if required:
+                    console.print(f"[red]❌ Failed to install {dep}: {result.stderr.strip()}[/]")
+                else:
+                    console.print(f"[yellow]⚠️ Failed to install {dep} (optional)[/]")
+        
+        if not failed_deps:
+            console.print(f"[green]✅ {group_name} dependencies installed successfully[/]")
+            return True
+        elif not required:
+            console.print(f"[yellow]⚠️ Some {group_name} dependencies failed (optional)[/]")
+            return True
+        else:
+            console.print(f"[red]❌ {len(failed_deps)} {group_name} dependencies failed[/]")
+            return False
+    else:
+        console.print(f"[yellow]⚠️ No {group_name} dependencies found[/]")
+        return True
 
 def main():
     current_dir = Path(__file__).parent.absolute()
@@ -109,14 +139,16 @@ def main():
         return
     
     # Install optional dependencies
-    install_requirements(pip_cmd, requirements_file, "speech", required=False)
-    install_requirements(pip_cmd, requirements_file, "rag", required=False)
+    console.print("\n[cyan]📋 Installing optional features...[/]")
+    speech_success = install_requirements(pip_cmd, requirements_file, "speech", required=False)
+    rag_success = install_requirements(pip_cmd, requirements_file, "rag", required=False)
+    docs_success = install_requirements(pip_cmd, requirements_file, "documents", required=False)
     
     # Special handling for audio dependencies on macOS
-    if "darwin" in sys.platform.lower():
-        console.print("[yellow]💡 macOS detected - if speech installation failed, try:[/]")
+    if not speech_success and "darwin" in sys.platform.lower():
+        console.print("\n[yellow]💡 macOS speech setup help:[/]")
         console.print("[dim]brew install portaudio[/]")
-        console.print("[dim]Then run: pip install pyaudio[/]")
+        console.print("[dim]Then run: python3 install.py --install-speech[/]")
     
     # Make scripts executable
     for script in ["main.py", "install.py", "setup.py"]:
@@ -125,10 +157,28 @@ def main():
             script_path.chmod(0o755)
     
     console.print("\n[bold green]🎉 Setup complete![/]")
+    
+    # Show feature status
+    console.print("\n[cyan]📋 Feature Status:[/]")
+    console.print(f"  Core functionality: [green]✅ Ready[/]")
+    console.print(f"  Speech mode: {'[green]✅ Ready[/]' if speech_success else '[yellow]⚠️ Not available[/]'}")
+    console.print(f"  RAG support: {'[green]✅ Ready[/]' if rag_success else '[yellow]⚠️ Not available[/]'}")
+    console.print(f"  Document processing: {'[green]✅ Ready[/]' if docs_success else '[yellow]⚠️ Not available[/]'}")
+    
     console.print("\n[cyan]Next steps:[/]")
     console.print("1. [dim]python3 install.py[/] - Install the 'coder' command globally")
     console.print("2. [dim]coder --list-models[/] - Check available Ollama models")
     console.print("3. [dim]coder qwen2.5-coder:3b mycoder chat[/] - Start chatting!")
+    
+    if not speech_success or not rag_success or not docs_success:
+        console.print("\n[cyan]Optional features:[/]")
+        if not speech_success:
+            console.print("  [dim]python3 install.py --install-speech[/] - Retry speech installation")
+        if not rag_success:
+            console.print("  [dim]python3 install.py --install-rag[/] - Retry RAG installation")
+        if not docs_success:
+            console.print("  [dim]python3 install.py --install-docs[/] - Retry document processing")
+    
     console.print("\n[yellow]💡 Make sure Ollama is running with some models installed[/]")
 
 if __name__ == "__main__":

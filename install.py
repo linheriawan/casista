@@ -151,27 +151,114 @@ def check_dependencies():
     """Check if all dependencies are installed"""
     current_dir = Path(__file__).parent.absolute()
     venv_python = current_dir / "venv" / "bin" / "python"
+    requirements_file = current_dir / "requirements.txt"
     
     if not venv_python.exists():
         console.print("[red]❌ Virtual environment not found. Run setup first:[/]")
-        console.print("[dim]python3 -m venv venv[/]")
-        console.print("[dim]source venv/bin/activate[/]")
-        console.print("[dim]pip install ollama rich typer prompt_toolkit[/]")
+        console.print("[dim]python3 setup.py[/]")
         return False
     
-    # Test imports
+    if not requirements_file.exists():
+        console.print("[red]❌ requirements.txt not found[/]")
+        return False
+    
+    # Test core imports
     try:
         result = subprocess.run([str(venv_python), "-c", 
-                               "import ollama, rich, typer; print('Dependencies OK')"],
+                               "import ollama, rich, typer, prompt_toolkit; print('Core dependencies OK')"],
                               capture_output=True, text=True)
         if result.returncode != 0:
-            console.print("[red]❌ Missing dependencies in virtual environment[/]")
+            console.print("[red]❌ Missing core dependencies in virtual environment[/]")
+            console.print("[dim]Run: python3 setup.py[/]")
             return False
     except Exception as e:
-        console.print(f"[red]❌ Error checking dependencies: {e}[/]")
+        console.print(f"[red]❌ Error checking core dependencies: {e}[/]")
         return False
     
+    # Check optional dependencies
+    optional_deps = {
+        "speech": ["speechrecognition", "pyttsx3", "pyaudio"],
+        "rag": ["sentence_transformers", "numpy", "faiss"],
+        "documents": ["docx", "PyPDF2"]
+    }
+    
+    for category, imports in optional_deps.items():
+        try:
+            import_str = ", ".join(imports)
+            result = subprocess.run([str(venv_python), "-c", 
+                                   f"import {import_str}; print('{category.title()} dependencies OK')"],
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                console.print(f"[green]✅ {category.title()} dependencies available[/]")
+            else:
+                console.print(f"[yellow]⚠️ {category.title()} dependencies not available[/]")
+        except Exception:
+            console.print(f"[yellow]⚠️ {category.title()} dependencies not available[/]")
+    
     return True
+
+def install_optional_dependencies(category: str):
+    """Install optional dependencies for a specific category"""
+    current_dir = Path(__file__).parent.absolute()
+    venv_python = current_dir / "venv" / "bin" / "python"
+    pip_cmd = f"{current_dir}/venv/bin/pip"
+    requirements_file = current_dir / "requirements.txt"
+    
+    if not venv_python.exists():
+        console.print("[red]❌ Virtual environment not found. Run setup first[/]")
+        return False
+    
+    if not requirements_file.exists():
+        console.print("[red]❌ requirements.txt not found[/]")
+        return False
+    
+    # Parse requirements.txt for the specific category
+    try:
+        with open(requirements_file, 'r') as f:
+            lines = f.readlines()
+        
+        current_section = "core"
+        requirements = {"speech": [], "rag": [], "documents": [], "development": []}
+        
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                if "Speech Dependencies" in line:
+                    current_section = "speech"
+                elif "RAG Dependencies" in line:
+                    current_section = "rag"
+                elif "Document Processing" in line:
+                    current_section = "documents"
+                elif "Development" in line:
+                    current_section = "development"
+                continue
+            
+            if not line.startswith('#') and '>' in line:
+                if current_section in requirements:
+                    requirements[current_section].append(line)
+        
+        # Install the requested category
+        if category.lower() in requirements and requirements[category.lower()]:
+            deps = ' '.join(requirements[category.lower()])
+            console.print(f"[cyan]📦 Installing {category} dependencies...[/]")
+            
+            result = subprocess.run(f"{pip_cmd} install {deps}", shell=True, capture_output=True, text=True)
+            
+            if result.returncode == 0:
+                console.print(f"[green]✅ {category} dependencies installed successfully[/]")
+                return True
+            else:
+                console.print(f"[red]❌ Failed to install {category} dependencies: {result.stderr}[/]")
+                if category == "speech" and "darwin" in sys.platform.lower():
+                    console.print("[yellow]💡 On macOS, try: brew install portaudio[/]")
+                return False
+        else:
+            console.print(f"[yellow]⚠️ No {category} dependencies found in requirements.txt[/]")
+            return False
+            
+    except Exception as e:
+        console.print(f"[red]❌ Error installing {category} dependencies: {e}[/]")
+        return False
 
 def main():
     import argparse
@@ -180,6 +267,10 @@ def main():
     parser.add_argument("--uninstall", action="store_true", help="Uninstall the coder command")
     parser.add_argument("--system", action="store_true", help="Install system-wide (requires sudo)")
     parser.add_argument("--check", action="store_true", help="Check installation and dependencies")
+    parser.add_argument("--install-speech", action="store_true", help="Install speech dependencies")
+    parser.add_argument("--install-rag", action="store_true", help="Install RAG dependencies")
+    parser.add_argument("--install-docs", action="store_true", help="Install document processing dependencies")
+    parser.add_argument("--install-all", action="store_true", help="Install all optional dependencies")
     
     args = parser.parse_args()
     
@@ -190,15 +281,35 @@ def main():
     if args.check:
         console.print("[cyan]🔍 Checking installation...[/]")
         if check_dependencies():
-            console.print("[green]✅ Dependencies OK[/]")
+            console.print("[green]✅ Dependencies checked[/]")
         else:
-            console.print("[red]❌ Dependencies missing[/]")
+            console.print("[red]❌ Some dependencies missing[/]")
         
         # Check if coder command exists
         if shutil.which("coder"):
             console.print("[green]✅ 'coder' command is available[/]")
         else:
             console.print("[yellow]⚠️ 'coder' command not found in PATH[/]")
+        return
+    
+    # Handle optional dependency installation
+    if args.install_speech:
+        install_optional_dependencies("speech")
+        return
+    
+    if args.install_rag:
+        install_optional_dependencies("rag")
+        return
+    
+    if args.install_docs:
+        install_optional_dependencies("documents")
+        return
+    
+    if args.install_all:
+        console.print("[cyan]📦 Installing all optional dependencies...[/]")
+        install_optional_dependencies("speech")
+        install_optional_dependencies("rag")
+        install_optional_dependencies("documents")
         return
     
     console.print("[bold cyan]🚀 Installing AI Assistant System[/]")
@@ -219,6 +330,11 @@ def main():
         console.print("  [dim]coder qwen2.5-coder:3b mycoder chat[/]")
         console.print("  [dim]coder llama3.2:3b advisor chat --query 'Help me with Python'[/]")
         console.print("  [dim]coder --list-models[/]")
+        console.print("\n[cyan]Optional features:[/]")
+        console.print("  [dim]python3 install.py --install-speech[/] - Enable voice mode")
+        console.print("  [dim]python3 install.py --install-rag[/] - Enable document RAG")
+        console.print("  [dim]python3 install.py --install-all[/] - Install all optional features")
+        console.print("  [dim]python3 install.py --check[/] - Check what's installed")
         console.print("\n[dim]Try: coder --help[/]")
 
 if __name__ == "__main__":
