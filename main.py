@@ -341,51 +341,63 @@ def run_assistant_session(args):
 
 def run_chat_session(session_config, args):
     """Run chat session."""
-    from library.conversation.chat_manager import ChatManager
-    from library.coding.file_ops import FileOperations
+    from library.session_manager import SessionManager
     
-    assistant_name = session_config["assistant"]["name"]
-    model = session_config["assistant"]["model"]
-    working_dir = Path(session_config["session"]["working_dir"])
-    context_dir = Path(session_config["paths"]["context_dir"])
+    # Initialize session manager with all configurations
+    session = SessionManager(session_config)
+    model_info = session.get_model_info()
     
     console.print(Panel.fit(
-        f"[bold cyan]{assistant_name}[/] - Chat Mode\n"
-        f"Model: [green]{model}[/]\n"
-        f"Working Directory: [yellow]{working_dir}[/]\n"
+        f"[bold cyan]{session.assistant_name}[/] - Chat Mode\n"
+        f"Model: [green]{model_info['model']}[/]\n"
+        f"Temperature: [blue]{model_info['temperature']}[/]\n"
+        f"Max Tokens: [blue]{model_info['max_tokens']}[/]\n"
+        f"Personality: [magenta]{model_info['personality']}[/]\n"
+        f"Working Directory: [yellow]{session.working_dir}[/]\n"
         f"Commands: 'exit', 'reset', '/dir=<path>' to change directory",
         title="🤖 AI Assistant"
     ))
     
-    # Initialize chat manager
-    chat_manager = ChatManager(model, assistant_name, context_dir)
-    
-    # Initialize file operations if enabled
-    file_ops = None
-    if session_config.get("capabilities", {}).get("file_operations") and not args.no_file_ops:
-        file_ops = FileOperations(working_dir)
-        console.print("[dim]📁 File operations enabled[/]")
+    # Get properly configured components
+    chat_manager = session.get_chat_manager()
+    file_ops = session.get_file_operations(enable=not args.no_file_ops)
     
     # One-shot query mode
     if args.query:
-        system_prompt = session_config.get("personality", {}).get("system_prompt", "")
-        response = chat_manager.send_message(args.query, system_prompt)
+        response_data = chat_manager.send_message(args.query)
+        
+        if response_data.get("error"):
+            console.print(f"[red]❌ {response_data['content']}[/]")
+            return False
+        
+        # Check if we should display the parsed response (for reasoning models with placeholder)
+        streaming_config = session.get_streaming_config()
+        show_placeholder = streaming_config.get("show_placeholder_for_reasoning", False)
+        show_raw_stream = streaming_config.get("show_raw_stream", True)
+        
+        # Only display parsed response if we used placeholder streaming
+        if show_placeholder and not show_raw_stream:
+            if response_data.get("has_reasoning"):
+                console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+                if response_data.get("reasoning"):
+                    console.print(f"[dim]💭 Reasoning: {response_data['reasoning']}[/]")
+            else:
+                console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
         
         # Handle file operations
-        if file_ops and response:
-            code_blocks = file_ops.parse_code_blocks(response)
+        if file_ops and response_data['content']:
+            code_blocks = file_ops.parse_code_blocks(response_data['content'])
             if code_blocks:
                 file_ops.apply_code_changes(code_blocks, args.auto_confirm)
         
         return True
     
     # Interactive mode
-    system_prompt = session_config.get("personality", {}).get("system_prompt", "")
-    user_name = session_config["assistant"]["user_name"]
+    user_name = session.get_user_name()
     
     while True:
         try:
-            user_input = input(f"\n💬 [{user_name}] ({working_dir.name}): ").strip()
+            user_input = input(f"\n💬 [{user_name}] ({session.working_dir.name}): ").strip()
             
             if user_input.lower() in ['exit', 'quit', 'q']:
                 console.print(f"[dim]Goodbye! 👋[/]")
@@ -405,10 +417,10 @@ def run_chat_session(session_config, args):
                         new_dir = Path(new_dir_str).expanduser()
                     elif new_dir_str.startswith('./') or new_dir_str.startswith('../'):
                         # Relative paths - relative to current working directory
-                        new_dir = working_dir / new_dir_str
+                        new_dir = session.working_dir / new_dir_str
                     elif new_dir_str == '.':
                         # Stay in current directory
-                        new_dir = working_dir
+                        new_dir = session.working_dir
                     elif new_dir_str == '~':
                         # Go to home directory
                         new_dir = Path.home()
@@ -417,16 +429,12 @@ def run_chat_session(session_config, args):
                         new_dir = Path(new_dir_str)
                         if not new_dir.is_absolute():
                             # Make relative to current working directory
-                            new_dir = working_dir / new_dir_str
+                            new_dir = session.working_dir / new_dir_str
                     
                     new_dir = new_dir.resolve()
                     
                     if new_dir.exists() and new_dir.is_dir():
-                        working_dir = new_dir
-                        # Update file operations working directory
-                        if file_ops:
-                            file_ops.working_dir = working_dir
-                        console.print(f"[green]📁 Changed working directory to: {working_dir}[/]")
+                        session.update_working_directory(new_dir)
                     else:
                         console.print(f"[red]❌ Directory not found: {new_dir}[/]")
                 except Exception as e:
@@ -437,11 +445,29 @@ def run_chat_session(session_config, args):
                 continue
             
             # Send message and get response
-            response = chat_manager.send_message(user_input, system_prompt)
+            response_data = chat_manager.send_message(user_input)
+            
+            if response_data.get("error"):
+                console.print(f"[red]❌ {response_data['content']}[/]")
+                continue
+            
+            # Check if we should display the parsed response (for reasoning models with placeholder)
+            streaming_config = session.get_streaming_config()
+            show_placeholder = streaming_config.get("show_placeholder_for_reasoning", False)
+            show_raw_stream = streaming_config.get("show_raw_stream", True)
+            
+            # Only display parsed response if we used placeholder streaming
+            if show_placeholder and not show_raw_stream:
+                if response_data.get("has_reasoning"):
+                    console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+                    if response_data.get("reasoning"):
+                        console.print(f"[dim]💭 Reasoning: {response_data['reasoning']}[/]")
+                else:
+                    console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
             
             # Handle file operations
-            if file_ops and response:
-                code_blocks = file_ops.parse_code_blocks(response)
+            if file_ops and response_data['content']:
+                code_blocks = file_ops.parse_code_blocks(response_data['content'])
                 if code_blocks:
                     file_ops.apply_code_changes(code_blocks, args.auto_confirm)
             
@@ -456,22 +482,24 @@ def run_chat_session(session_config, args):
 
 def run_speech_session(session_config, args):
     """Run speech session with voice interaction."""
-    assistant_name = session_config["assistant"]["name"]
-    model = session_config["assistant"]["model"]
-    working_dir = Path(session_config["session"]["working_dir"])
-    context_dir = Path(session_config["paths"]["context_dir"])
+    from library.session_manager import SessionManager
     
-    # Get speech configuration
-    voice_config = session_config.get("voice", {})
-    speech_backend = voice_config.get("speech_backend", "google")
-    voice_id = voice_config.get("voice_id", "")
-    voice_name = voice_config.get("voice_name", "Default")
-    speech_rate = voice_config.get("speech_rate", 200)
+    # Initialize session manager
+    session = SessionManager(session_config)
+    model_info = session.get_model_info()
+    voice_config = session.get_voice_config()
+    
+    # Extract voice configuration
+    speech_backend = voice_config["speech_backend"]
+    voice_id = voice_config["voice_id"]
+    voice_name = voice_config["voice_name"]
+    speech_rate = voice_config["speech_rate"]
     
     console.print(Panel.fit(
-        f"[bold cyan]{assistant_name}[/] - Speech Mode\n"
-        f"Model: [green]{model}[/]\n"
-        f"Working Directory: [yellow]{working_dir}[/]\n"
+        f"[bold cyan]{session.assistant_name}[/] - Speech Mode\n"
+        f"Model: [green]{model_info['model']}[/]\n"
+        f"Temperature: [blue]{model_info['temperature']}[/]\n"
+        f"Working Directory: [yellow]{session.working_dir}[/]\n"
         f"Speech Backend: [cyan]{speech_backend}[/]\n"
         f"Voice: [magenta]{voice_name} (ID: {voice_id})[/]\n"
         f"Speech Rate: [blue]{speech_rate}[/]\n"
@@ -488,11 +516,8 @@ def run_speech_session(session_config, args):
         console.print("[dim]Install with: python3 install.py --install-speech[/]")
         return False
     
-    # Initialize speech components
-    from library.conversation.chat_manager import ChatManager
-    
-    # Initialize chat manager
-    chat_manager = ChatManager(model, assistant_name, context_dir)
+    # Get properly configured chat manager
+    chat_manager = session.get_chat_manager()
     
     # Initialize speech recognition
     recognizer = sr.Recognizer()
@@ -502,7 +527,7 @@ def run_speech_session(session_config, args):
     if speech_backend == "whisper":
         try:
             import whisper
-            whisper_model = whisper.load_model("base")
+            whisper_model = whisper.load_model("base", device="cpu", download_root=None)
             console.print(f"[green]✅ Using Whisper model for speech recognition[/]")
         except ImportError:
             console.print(f"[yellow]⚠️ Whisper not installed, falling back to Google[/]")
@@ -556,8 +581,8 @@ def run_speech_session(session_config, args):
         recognizer.adjust_for_ambient_noise(source)
         console.print(" Done!")
     
-    system_prompt = session_config.get("personality", {}).get("system_prompt", "")
-    user_name = session_config["assistant"]["user_name"]
+    system_prompt = session.get_system_prompt()
+    user_name = session.get_user_name()
     
     while True:
         try:
@@ -617,22 +642,40 @@ def run_speech_session(session_config, args):
                 continue
             
             # Get AI response
-            response = chat_manager.send_message(user_input, system_prompt)
+            response_data = chat_manager.send_message(user_input)
             
-            if response:
-                console.print(f"🤖 [{assistant_name}]: {response}")
+            if response_data.get("error"):
+                console.print(f"[red]❌ {response_data['content']}[/]")
+                continue
+            
+            # Check streaming configuration for display
+            streaming_config = session.get_streaming_config()
+            show_placeholder = streaming_config.get("show_placeholder_for_reasoning", False)
+            show_raw_stream = streaming_config.get("show_raw_stream", True)
+            
+            # Determine TTS content and display
+            if response_data.get("has_reasoning"):
+                # Always use clean answer for TTS
+                tts_response = response_data['clean_answer']
                 
-                # Filter out thinking tags for TTS
-                import re
-                tts_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
-                tts_response = tts_response.strip()
+                # Display based on streaming config
+                if show_placeholder and not show_raw_stream:
+                    console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+                    if response_data.get("reasoning"):
+                        console.print(f"[dim]💭 Reasoning: {response_data['reasoning']}[/]")
+            else:
+                tts_response = response_data['content']
                 
-                # Only speak if there's content after filtering
-                if tts_response:
-                    tts_engine.say(tts_response)
-                    tts_engine.runAndWait()
-                else:
-                    console.print("[dim](Response contained only thinking, not spoken)[/]")
+                # Display based on streaming config  
+                if show_placeholder and not show_raw_stream:
+                    console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
+            
+            # Speak the clean response (reasoning-free)
+            if tts_response and tts_response.strip():
+                tts_engine.say(tts_response)
+                tts_engine.runAndWait()
+            else:
+                console.print("[dim](No speakable content)[/]")
             
         except sr.WaitTimeoutError:
             console.print(" Timeout - no speech detected")
@@ -653,27 +696,221 @@ def run_speech_session(session_config, args):
 
 
 def run_image_session(session_config, args):
-    """Run image generation session."""
-    if not args.prompt:
-        console.print("[red]❌ Image prompt required for image mode[/]")
-        console.print("Use: --prompt 'Your image description'")
+    """Run interactive image generation session with conversational context."""
+    
+    from library.session_manager import SessionManager
+    
+    # Initialize session manager
+    session = SessionManager(session_config)
+    model_info = session.get_model_info()
+    
+    # Get properly configured components
+    chat_manager = session.get_chat_manager()
+    generator = session.get_image_generator()
+    
+    if not generator:
+        console.print("[red]❌ Image generation not enabled for this assistant[/]")
+        console.print("[dim]Enable with: coder configure <assistant> and set image_generation = true[/]")
         return False
     
-    from library.image_generation.generation import ImageGenerator
+    console.print(Panel.fit(
+        f"[bold cyan]{session.assistant_name}[/] - Image Generation Mode\n"
+        f"Chat Model: [green]{model_info['model']}[/] (for conversation & prompt enhancement)\n"
+        f"Image Models: [magenta]{', '.join(session.config.get('image', {}).get('models', ['stable-diffusion']))}[/]\n"
+        f"Working Directory: [yellow]{session.working_dir}[/]\n"
+        f"Commands: 'exit', 'reset', 'list models', 'switch model <name>', 'refine last', 'variations <n>', 'pipeline <steps>'",
+        title="🎨 Interactive Image Studio"
+    ))
     
-    working_dir = Path(session_config["session"]["working_dir"])
-    images_dir = working_dir / session_config["image"]["output_subdir"]
-    models = session_config["image"]["models"]
+    # Enhanced system prompt for interactive image generation
+    image_system_prompt = session.get_mode_specific_system_prompt("image")
     
-    console.print(f"[cyan]🎨 Generating image: '{args.prompt}'[/]")
-    console.print(f"[dim]Output directory: {images_dir}[/]")
+    # Interactive mode or one-shot mode
+    if args.prompt:
+        # One-shot generation mode
+        return generate_single_image(session, chat_manager, generator, args.prompt, args)
     
-    # Initialize image generator
-    generator = ImageGenerator(models, images_dir)
+    # Interactive conversational image generation mode
+    user_name = session.get_user_name()
+    last_generated_image = None
+    current_model = session.config.get("image", {}).get("models", ["hakurei/waifu-diffusion"])[0]
+    
+    console.print("[green]🎨 Interactive Image Studio ready! Start describing what you want to create...[/]")
+    console.print("[dim]Try commands like: 'list models', 'switch model <name>', 'refine last', 'variations 4', 'pipeline <steps>'[/]")
+    
+    while True:
+        try:
+            user_input = input(f"\n🎨 [{user_name}] ({session.working_dir.name}): ").strip()
+            
+            if user_input.lower() in ['exit', 'quit', 'q']:
+                console.print(f"[dim]Happy creating! 🎨[/]")
+                break
+            
+            if user_input.lower() == 'reset':
+                chat_manager.clear_conversation()
+                last_generated_image = None
+                console.print("[green]✅ Conversation and image history reset[/]")
+                continue
+            
+            # Handle image-specific commands
+            if user_input.lower() == 'list models':
+                available_models = generator.list_available_models()
+                console.print("[cyan]📋 Model Configuration:[/]")
+                console.print(f"[green]🤖 Chat Model:[/] {model_info['model']} (for conversation & prompt enhancement)")
+                console.print(f"[magenta]🎨 Image Models:[/] (for actual image generation)")
+                cached_models = generator.cached_models
+                for model in available_models:
+                    if model == current_model:
+                        marker = "🟢"
+                        status = "(current)"
+                    elif model in cached_models:
+                        marker = "🔄"
+                        status = "(cached)"
+                    else:
+                        marker = "⚪"
+                        status = "(download)"
+                    console.print(f"  {marker} {model} {status}")
+                
+                console.print("\n[dim]💡 The chat model enhances your prompts, then the image model generates visuals[/]")
+                continue
+            
+            if user_input.lower().startswith('switch model '):
+                new_model = user_input[13:].strip()
+                if generator.validate_model(new_model):
+                    current_model = new_model
+                    console.print(f"[green]✅ Switched to model: {current_model}[/]")
+                else:
+                    console.print(f"[red]❌ Model not available: {new_model}[/]")
+                    console.print("[dim]Use 'list models' to see available options[/]")
+                continue
+            
+            if user_input.lower() == 'refine last' and last_generated_image:
+                # Use img2img to refine the last generated image
+                console.print(f"[cyan]🆔 Refining last image: {last_generated_image['path']}[/]")
+                
+                # Get refinement prompt from AI
+                refinement_prompt = f"Please provide a refined prompt to improve this image: {last_generated_image['prompt']}"
+                response_data = chat_manager.send_message(refinement_prompt)
+                
+                if response_data.get("error"):
+                    enhanced_prompt = f"enhanced version of: {last_generated_image['prompt']}"
+                else:
+                    if response_data.get("has_reasoning"):
+                        console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+                        enhanced_prompt = response_data['clean_answer']
+                    else:
+                        console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
+                        enhanced_prompt = response_data['content']
+                
+                # Refine the image
+                refined_path = generator.generate_image_to_image(
+                    prompt=enhanced_prompt,
+                    base_image_path=Path(last_generated_image['path']),
+                    model_name=current_model,
+                    strength=0.7
+                )
+                
+                if refined_path:
+                    last_generated_image = {
+                        'success': True,
+                        'path': refined_path,
+                        'prompt': enhanced_prompt,
+                        'model': current_model,
+                        'type': 'refinement'
+                    }
+                    console.print(f"[green]✅ Refined image saved: {refined_path}[/]")
+                else:
+                    console.print(f"[red]❌ Refinement failed[/]")
+                continue
+            
+            if user_input.lower().startswith('variations '):
+                if last_generated_image:
+                    try:
+                        num_variations = int(user_input.split()[1]) if len(user_input.split()) > 1 else 4
+                        console.print(f"[cyan]🎭 Creating {num_variations} variations...[/]")
+                        
+                        variations = generator.create_variations(
+                            Path(last_generated_image['path']),
+                            num_variations=num_variations
+                        )
+                        
+                        successful_variations = [v for v in variations if v is not None]
+                        if successful_variations:
+                            console.print(f"[green]✅ Created {len(successful_variations)} variations[/]")
+                            # Update last image to the first variation
+                            last_generated_image = {
+                                'success': True,
+                                'path': successful_variations[0],
+                                'prompt': f"variation of: {last_generated_image['prompt']}",
+                                'model': current_model,
+                                'type': 'variation'
+                            }
+                        else:
+                            console.print(f"[red]❌ No variations created successfully[/]")
+                    except ValueError:
+                        console.print(f"[red]❌ Invalid number of variations. Use: variations <number>[/]")
+                else:
+                    console.print(f"[yellow]⚠️ No previous image to create variations from[/]")
+                continue
+            
+            if user_input.lower().startswith('pipeline '):
+                pipeline_definition = user_input[9:].strip()
+                result = run_enhanced_image_pipeline(session, chat_manager, generator, pipeline_definition, current_model, last_generated_image)
+                if result:
+                    last_generated_image = result
+                continue
+            
+            if not user_input:
+                continue
+            
+            # Generate image with conversational AI assistance
+            result_data = generate_conversational_image(
+                session, chat_manager, generator, user_input, current_model, args, last_generated_image
+            )
+            
+            if result_data and result_data.get('success'):
+                last_generated_image = result_data
+                console.print(f"[green]✅ Image saved: {result_data['path']}[/]")
+            
+        except KeyboardInterrupt:
+            console.print(f"\n[dim]Happy creating! 🎨[/]")
+            break
+        except Exception as e:
+            console.print(f"[red]❌ Error: {e}[/]")
+    
+    return True
+
+
+def generate_single_image(session, chat_manager, generator, prompt, args):
+    """Generate a single image (one-shot mode)."""
+    console.print(f"[cyan]🎨 Processing image request: '{prompt}'[/]")
+    
+    # Get AI assistance for prompt enhancement
+    response_data = chat_manager.send_message(
+        f"Please help me create an image: {prompt}",
+        system_prompt=session.get_mode_specific_system_prompt("image")
+    )
+    
+    if response_data.get("error"):
+        console.print(f"[yellow]⚠️ AI assistance failed, using original prompt[/]")
+        enhanced_prompt = prompt
+    else:
+        # Display AI's response and suggestions
+        if response_data.get("has_reasoning"):
+            console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+            if response_data.get("reasoning"):
+                console.print(f"[dim]💭 Analysis: {response_data['reasoning']}[/]")
+        else:
+            console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
+        
+        enhanced_prompt = prompt  # Could extract enhanced prompt from AI response
     
     # Generate image
+    image_config = session.config.get("image", {})
+    models = image_config.get("models", [])
+    
     result = generator.generate_image(
-        prompt=args.prompt,
+        prompt=enhanced_prompt,
         width=args.width,
         height=args.height,
         model_name=models[0] if models else None
@@ -681,10 +918,160 @@ def run_image_session(session_config, args):
     
     if result:
         console.print(f"[green]✅ Image generated successfully![/]")
+        console.print(f"[dim]Saved to: {result}[/]")
+        
+        # Add to conversation context
+        image_context = f"Generated image: '{enhanced_prompt}' → {result}"
+        chat_manager.context_manager.add_message("assistant", image_context)
         return True
     else:
         console.print(f"[red]❌ Image generation failed[/]")
         return False
+
+
+def generate_conversational_image(session, chat_manager, generator, user_input, current_model, args, last_image=None):
+    """Generate image with conversational AI assistance."""
+    
+    # Build context for the AI assistant
+    context_info = ""
+    if last_image:
+        context_info = f"\\nPrevious image: '{last_image['prompt']}' → {last_image['path']}"
+    
+    # Get AI assistance for understanding the request
+    ai_prompt = f"""User request: {user_input}{context_info}
+
+Please help with this image generation request. Provide:
+1. Enhanced prompt for better image quality
+2. Technical suggestions (style, composition, etc.)
+3. Any refinements based on conversation history
+
+Respond with the enhanced prompt and brief explanation."""
+    
+    response_data = chat_manager.send_message(ai_prompt)
+    
+    if response_data.get("error"):
+        console.print(f"[yellow]⚠️ AI assistance failed, using original request[/]")
+        enhanced_prompt = user_input
+        explanation = "Using original request as provided."
+    else:
+        # Display AI's response
+        if response_data.get("has_reasoning"):
+            console.print(f"🤖 [{session.assistant_name}]: {response_data['clean_answer']}")
+            if response_data.get("reasoning"):
+                console.print(f"[dim]💭 Analysis: {response_data['reasoning']}[/]")
+        else:
+            console.print(f"🤖 [{session.assistant_name}]: {response_data['content']}")
+        
+        # Extract enhanced prompt from AI response (simplified for now)
+        enhanced_prompt = user_input
+        explanation = response_data.get('clean_answer', response_data.get('content', ''))
+    
+    # Generate the image
+    console.print(f"[cyan]🎨 Generating with model: {current_model}[/]")
+    
+    result = generator.generate_image(
+        prompt=enhanced_prompt,
+        width=getattr(args, 'width', 512),
+        height=getattr(args, 'height', 512),
+        model_name=current_model
+    )
+    
+    if result:
+        # Add to conversation context
+        image_context = f"Generated image: '{enhanced_prompt}' using {current_model} → {result}"
+        chat_manager.context_manager.add_message("assistant", image_context)
+        
+        return {
+            'success': True,
+            'path': result,
+            'prompt': enhanced_prompt,
+            'model': current_model,
+            'explanation': explanation
+        }
+    else:
+        # Add failure to context
+        failure_context = f"Failed to generate image: '{enhanced_prompt}' using {current_model}"
+        chat_manager.context_manager.add_message("assistant", failure_context)
+        
+        return {
+            'success': False,
+            'prompt': enhanced_prompt,
+            'model': current_model,
+            'error': 'Generation failed'
+        }
+
+
+def run_enhanced_image_pipeline(session, chat_manager, generator, pipeline_definition, current_model, last_image=None):
+    """Run an enhanced image pipeline with multiple step types."""
+    console.print(f"[cyan]🔗 Running enhanced pipeline: {pipeline_definition}[/]")
+    
+    # Parse pipeline definition
+    # Format: "step1 -> step2 -> step3" or "generate:prompt -> refine:new prompt -> upscale:2x"
+    steps = [step.strip() for step in pipeline_definition.split('->')]
+    
+    console.print(f"[dim]Pipeline steps ({len(steps)}): {' → '.join(steps)}[/]")
+    
+    current_image = last_image
+    pipeline_steps = []
+    
+    # Parse each step
+    for step_str in steps:
+        if ':' in step_str:
+            step_type, step_content = step_str.split(':', 1)
+            step_type = step_type.strip().lower()
+            step_content = step_content.strip()
+        else:
+            step_type = 'generate'
+            step_content = step_str
+        
+        step_config = {
+            'type': step_type,
+            'prompt': step_content,
+            'model': current_model
+        }
+        
+        # Add step-specific parameters
+        if step_type == 'upscale':
+            try:
+                scale_factor = int(step_content.replace('x', ''))
+                step_config['scale_factor'] = scale_factor
+                step_config['prompt'] = ''
+            except:
+                step_config['scale_factor'] = 2
+        elif step_type == 'refine':
+            step_config['strength'] = 0.7
+        
+        pipeline_steps.append(step_config)
+    
+    # Execute pipeline using generator's run_pipeline method
+    base_prompt = pipeline_steps[0]['prompt'] if pipeline_steps else "abstract art"
+    
+    # If we have a starting image, modify the first step to be a refinement
+    if current_image and current_image.get('path'):
+        if pipeline_steps and pipeline_steps[0]['type'] == 'generate':
+            pipeline_steps[0]['type'] = 'refine'
+            pipeline_steps[0]['base_image'] = current_image['path']
+    
+    result_path = generator.run_pipeline(base_prompt, pipeline_steps)
+    
+    if result_path:
+        result_data = {
+            'success': True,
+            'path': result_path,
+            'prompt': f"pipeline result: {pipeline_definition}",
+            'model': current_model,
+            'type': 'pipeline'
+        }
+        
+        # Add to conversation context
+        context_msg = f"Completed image pipeline: {pipeline_definition} → {result_path}"
+        chat_manager.context_manager.add_message("assistant", context_msg)
+        
+        console.print(f"[green]🎉 Pipeline completed! Result: {result_path}[/]")
+        return result_data
+    else:
+        console.print(f"[red]❌ Pipeline failed[/]")
+        return None
 
 
 def run_setup():

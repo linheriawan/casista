@@ -1,35 +1,55 @@
 """
 Context management for conversation history.
 
-Handles loading, saving, and managing conversation context.
+Handles loading, saving, and managing conversation context with enhanced parsing.
 """
 
 import json
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Any
 from rich.console import Console
+
+from .message_parser import MessageParser
 
 console = Console()
 
 
 class ContextManager:
-    """Manages conversation context and history."""
+    """Manages conversation context and history with enhanced message parsing."""
     
-    def __init__(self, context_dir: Path, assistant_name: str):
-        """Initialize context manager."""
+    def __init__(self, context_dir: Path, assistant_name: str, parsing_config: Dict[str, Any] = None):
+        """Initialize context manager with optional parsing configuration."""
         self.context_dir = context_dir
         self.assistant_name = assistant_name
         self.context_file = context_dir / "context.json"
+        
+        # Initialize message parser
+        self.parser = MessageParser(parsing_config or {}) if parsing_config else None
+        
+        # System prompt state
+        self._system_prompt_set = False
+        self._current_system_prompt = ""
         
         # Ensure directory exists
         self.context_dir.mkdir(parents=True, exist_ok=True)
     
     def load_context(self) -> List[Dict]:
-        """Load conversation context from file."""
+        """Load conversation context from file.
+        
+        This provides conversation memory - model will see previous messages
+        and can continue conversations across sessions.
+        """
         if self.context_file.exists():
             try:
                 data = json.loads(self.context_file.read_text(encoding='utf-8'))
-                return data.get("messages", [])
+                messages = data.get("messages", [])
+                
+                # Check if system prompt was set in previous session
+                if messages and messages[0].get("role") == "system":
+                    self._system_prompt_set = True
+                    self._current_system_prompt = messages[0].get("content", "")
+                
+                return messages
             except Exception as e:
                 console.print(f"[yellow]⚠️ Error loading context: {e}[/]")
                 return []
@@ -52,15 +72,20 @@ class ContextManager:
             console.print(f"[red]❌ Error saving context: {e}[/]")
     
     def add_message(self, role: str, content: str, messages: List[Dict] = None) -> List[Dict]:
-        """Add a message to context."""
+        """Add a message to context with enhanced parsing."""
         if messages is None:
             messages = self.load_context()
         
-        message = {
-            "role": role,
-            "content": content,
-            "timestamp": self._get_timestamp()
-        }
+        # Use parser if available
+        if self.parser:
+            message = self.parser.parse_message(content, role)
+        else:
+            # Fallback to simple message structure
+            message = {
+                "role": role,
+                "content": content,
+                "timestamp": self._get_timestamp()
+            }
         
         messages.append(message)
         self.save_context(messages)
@@ -148,6 +173,63 @@ class ContextManager:
         
         else:
             raise ValueError(f"Unsupported format: {format}")
+    
+    def get_display_content(self, message: Dict[str, Any], include_reasoning: bool = True) -> str:
+        """Get message content for display."""
+        if self.parser:
+            return self.parser.get_display_content(message, include_reasoning)
+        return message.get("content", "")
+    
+    def get_reasoning_content(self, message: Dict[str, Any]) -> Optional[str]:
+        """Get reasoning content from message."""
+        if self.parser:
+            return self.parser.get_reasoning_content(message)
+        return None
+    
+    def has_reasoning(self, message: Dict[str, Any]) -> bool:
+        """Check if message has reasoning content."""
+        return bool(message.get("parsed_sections", {}).get("reasoning"))
+    
+    def ensure_system_prompt(self, system_prompt: str) -> List[Dict]:
+        """Ensure system prompt is set at the beginning of conversation.
+        
+        This establishes the model's role/context without displaying to user.
+        System prompt is sent once and persists throughout the conversation.
+        """
+        messages = self.load_context()
+        
+        # If system prompt not set or changed, add/update it
+        if not self._system_prompt_set or self._current_system_prompt != system_prompt:
+            # Remove old system message if exists
+            if messages and messages[0].get("role") == "system":
+                messages.pop(0)
+            
+            # Add new system message at the beginning
+            system_message = {
+                "role": "system",
+                "content": system_prompt,
+                "timestamp": self._get_timestamp()
+            }
+            messages.insert(0, system_message)
+            
+            # Update state
+            self._system_prompt_set = True
+            self._current_system_prompt = system_prompt
+            
+            # Save updated context
+            self.save_context(messages)
+            
+            console.print(f"[dim]🎯 System context established for {self.assistant_name}[/]")
+        
+        return messages
+    
+    def get_system_prompt_status(self) -> Dict[str, Any]:
+        """Get current system prompt status."""
+        return {
+            "is_set": self._system_prompt_set,
+            "prompt": self._current_system_prompt,
+            "length": len(self._current_system_prompt)
+        }
     
     def _get_timestamp(self) -> str:
         """Get current ISO timestamp."""

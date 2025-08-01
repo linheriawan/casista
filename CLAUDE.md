@@ -276,6 +276,33 @@ coder qwen2.5-coder:3b helper chat --query "Summarize key points" --rag /documen
 - Caching of processed document embeddings
 - Adjustable context window for document processing
 
+## Image Generation Mode
+
+### How to Use Image Generation Mode
+- Activate image generation mode using the `--image` or `--gen-image` flag
+- Specify the desired image model (if multiple are available)
+- Provide a detailed text prompt describing the image
+- Optionally set image parameters like size, style, or resolution
+
+### Image Generation Examples
+```bash
+# Basic image generation
+coder stable-diffusion:1.5 artist gen-image --prompt "A serene mountain landscape at sunset"
+
+# Specify image dimensions
+coder stable-diffusion:1.5 artist gen-image --prompt "A futuristic cityscape" --width 1024 --height 768
+
+# Choose a specific style
+coder stable-diffusion:1.5 artist gen-image --prompt "Portrait of a cyberpunk character" --style "digital art"
+```
+
+### Supported Image Generation Features
+- Multiple image generation models
+- Customizable image dimensions
+- Style and aesthetic control
+- Seed-based reproducibility
+- Format selection (PNG, JPEG, etc.)
+
 ## TODO: Planned Enhancements
 
 ### Architecture Refactoring
@@ -330,3 +357,4 @@ coder qwen2.5-coder:3b helper chat --query "Summarize key points" --rag /documen
   - [ ] Interactive setup wizard
   - [ ] Enhanced help system
   - [ ] Configuration validation and migration tools
+```

@@ -88,7 +88,12 @@ class VoiceManager:
         console.print(table)
         return True
     
-    def test_tts_voice(self, voice_id: str, test_text: str = "Hello, this is a voice test.") -> bool:
+    def test_tts_voice(self, voice_id: str, test_text: str = """
+The wind walks softly through the trees,
+It hums a tune in rustling keys.
+It lifts the clouds, it cools the sun,
+And sings of places never known.
+    """) -> bool:
         """Test a TTS voice."""
         try:
             import pyttsx3

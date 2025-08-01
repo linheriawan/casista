@@ -70,7 +70,7 @@ frequency_penalty = 0.0
 presence_penalty = 0.0
 
 # Image Generation Models
-[image_models."runwayml/stable-diffusion-v1-5"]
+[image_models."hakurei/waifu-diffusion"]
 name = "Stable Diffusion v1.5"
 type = "image_generation"
 provider = "huggingface"
@@ -80,7 +80,7 @@ requires_gpu = true
 recommended_for = ["general_images", "art", "concept_art"]
 capabilities = ["text_to_image"]
 
-[image_models."runwayml/stable-diffusion-v1-5".parameters]
+[image_models."hakurei/waifu-diffusion".parameters]
 width = 512
 height = 512
 num_inference_steps = 20

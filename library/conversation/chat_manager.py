@@ -17,54 +17,85 @@ console = Console()
 class ChatManager:
     """Manages complete chat functionality including context and AI responses."""
     
-    def __init__(self, model: str, assistant_name: str, context_dir: Path,
-                 temperature: float = 0.1, max_tokens: int = 2048):
-        """Initialize chat manager."""
-        self.model = model
-        self.assistant_name = assistant_name
-        self.temperature = temperature
-        self.max_tokens = max_tokens
+    def __init__(self, session_config: dict):
+        """Initialize chat manager with complete session configuration."""
+        self.config = session_config
         
-        # Initialize components
-        self.context_manager = ContextManager(context_dir, assistant_name)
-        self.ollama_client = OllamaClient(model, temperature, max_tokens)
+        # Extract key configuration values
+        self.assistant_name = session_config["assistant"]["name"]
+        self.model = session_config["assistant"]["model"]
+        self.temperature = session_config.get("personality", {}).get("temperature", 0.1)
+        self.max_tokens = session_config.get("advanced", {}).get("context_window", 2048)
+        
+        # Get parsing and streaming configuration
+        parsing_config = session_config.get("parsing", {})
+        streaming_config = session_config.get("streaming", {})
+        
+        # Get context directory
+        context_dir = Path(session_config["paths"]["context_dir"])
+        
+        # Initialize components with parsing and streaming configuration
+        self.context_manager = ContextManager(context_dir, self.assistant_name, parsing_config)
+        self.ollama_client = OllamaClient(self.model, self.temperature, self.max_tokens, streaming_config)
+        
+        # Store system prompt for efficient reuse
+        self._system_prompt = session_config.get("personality", {}).get("system_prompt", "")
+        self._system_prompt_set = False
         
         # Check model availability
         if not self.ollama_client.check_model_availability():
-            console.print(f"[yellow]⚠️ Model {model} not found. Attempting to pull...[/]")
+            console.print(f"[yellow]⚠️ Model {self.model} not found. Attempting to pull...[/]")
             if not self.ollama_client.pull_model():
-                raise RuntimeError(f"Failed to pull model: {model}")
+                raise RuntimeError(f"Failed to pull model: {self.model}")
     
     def send_message(self, user_input: str, system_prompt: str = None, 
-                    stream: bool = True) -> str:
-        """Send a message and get AI response."""
-        # Load current context
-        messages = self.context_manager.load_context()
+                    stream: bool = True) -> Dict[str, Any]:
+        """Send a message and get AI response with parsed content.
+        
+        System prompt is automatically managed:
+        - Set once at conversation start (not displayed to user)
+        - Provides persistent role/context to model
+        - Conversation history loaded from context.json for continuity
+        """
+        # Use provided system prompt or stored one
+        if system_prompt is None:
+            system_prompt = self._system_prompt
+        
+        # Ensure system prompt is set (establishes model context)
+        messages = self.context_manager.ensure_system_prompt(system_prompt)
         
         # Add user message to context
         messages = self.context_manager.add_message("user", user_input, messages)
         
-        # Prepare messages for model
-        model_messages = self.ollama_client.prepare_messages(system_prompt, messages)
-        
-        # Validate messages
-        if not self.ollama_client.validate_message_format(model_messages):
+        # Validate messages (system + conversation history)
+        if not self.ollama_client.validate_message_format(messages):
             console.print("[red]❌ Invalid message format[/]")
-            return "Error: Invalid message format"
+            return {"content": "Error: Invalid message format", "error": True}
         
-        # Generate response
+        # Generate response (model sees system prompt + conversation history)
         try:
-            response = self.ollama_client.generate_response(model_messages, stream=stream)
+            response = self.ollama_client.generate_response(messages, stream=stream)
             
-            # Add assistant response to context
-            self.context_manager.add_message("assistant", response, messages)
+            # Add assistant response to context (with parsing)
+            updated_messages = self.context_manager.add_message("assistant", response, messages)
             
-            return response
+            # Get the parsed message (last message in context)
+            parsed_message = updated_messages[-1]
+            
+            # Return structured response
+            return {
+                "content": response,
+                "parsed_message": parsed_message,
+                "clean_answer": self.context_manager.get_display_content(parsed_message, include_reasoning=False),
+                "reasoning": self.context_manager.get_reasoning_content(parsed_message),
+                "has_reasoning": self.context_manager.has_reasoning(parsed_message),
+                "error": False
+            }
             
         except Exception as e:
             error_msg = f"Error generating response: {e}"
             console.print(f"[red]❌ {error_msg}[/]")
-            return error_msg
+            return {"content": error_msg, "error": True}
     
     def get_conversation_history(self, limit: int = None) -> List[Dict]:
         """Get conversation history."""
@@ -165,6 +196,14 @@ class ChatManager:
                 return msg["content"]
         
         return None
+    
+    def get_system_prompt(self) -> str:
+        """Get the system prompt from configuration."""
+        return self.config.get("personality", {}).get("system_prompt", "")
+    
+    def get_user_name(self) -> str:
+        """Get the user name from configuration."""
+        return self.config.get("assistant", {}).get("user_name", "user")
     
     def retry_last_response(self, system_prompt: str = None) -> str:
         """Retry generating the last response."""

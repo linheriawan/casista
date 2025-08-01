@@ -90,7 +90,7 @@ class AssistantConfig(ConfigLoader):
             
             "image": {
                 "enabled": False,
-                "models": ["runwayml/stable-diffusion-v1-5"],
+                "models": ["hakurei/waifu-diffusion"],
                 "output_subdir": "generated_images",  # Subdirectory in working_dir for images
                 "default_width": 512,
                 "default_height": 512
@@ -114,6 +114,26 @@ class AssistantConfig(ConfigLoader):
                 "context_window": 8192,
                 "memory_limit": 100,
                 "auto_save": True
+            },
+            
+            "parsing": {
+                "extract_reasoning": True,
+                "reasoning_patterns": [
+                    {"tag": "think", "type": "reasoning", "strip_tags": True},
+                    {"tag": "analysis", "type": "analysis", "strip_tags": True},
+                    {"tag": "reflection", "type": "reflection", "strip_tags": True}
+                ],
+                "extract_code_blocks": True,
+                "extract_system_messages": True,
+                "preserve_original": True,
+                "response_sections": ["reasoning", "answer", "code"]
+            },
+            
+            "streaming": {
+                "show_placeholder_for_reasoning": True,
+                "placeholder_text": "🤖 Thinking...",
+                "show_raw_stream": False,
+                "update_frequency": 0.1
             }
         }
         
@@ -123,9 +143,10 @@ class AssistantConfig(ConfigLoader):
         # Create assistant's context directory structure
         self._create_assistant_directories(assistant_name)
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Created assistant '{assistant_name}' with model '{model}' and personality '{personality}'[/]")
@@ -137,28 +158,37 @@ class AssistantConfig(ConfigLoader):
     
     def get_assistant(self, assistant_name: str) -> Optional[Dict[str, Any]]:
         """Get assistant configuration."""
-        config_file = f"{assistant_name}.assistant.toml"
-        return self.load_toml(config_file)
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        return self._load_toml_from_path(config_file)
     
     def list_assistants(self) -> List[Dict[str, str]]:
         """List all available assistants."""
-        config_files = self.list_configs("*.assistant.toml")
         assistants = []
+        ai_context_dir = Path(".ai_context")
         
-        for config_file in config_files:
-            assistant_name = config_file.replace(".assistant.toml", "")
-            config = self.load_toml(config_file)
-            
-            if config and "assistant" in config:
-                assistant_info = config["assistant"]
-                assistants.append({
-                    "name": assistant_name,
-                    "model": assistant_info.get("model", "unknown"),
-                    "personality": config.get("personality", {}).get("personality_id", "unknown"),
-                    "working_dir": assistant_info.get("working_dir", "."),
-                    "user_name": assistant_info.get("user_name", "user"),
-                    "created_at": assistant_info.get("created_at", "unknown")
-                })
+        if not ai_context_dir.exists():
+            return assistants
+        
+        # Search for assistant.toml files in .ai_context subdirectories
+        for assistant_dir in ai_context_dir.iterdir():
+            if assistant_dir.is_dir():
+                assistant_name = assistant_dir.name
+                config_file = assistant_dir / "config.toml"
+                
+                if config_file.exists():
+                    config = self._load_toml_from_path(config_file)
+                    
+                    if config and "assistant" in config:
+                        assistant_info = config["assistant"]
+                        assistants.append({
+                            "name": assistant_name,
+                            "model": assistant_info.get("model", "unknown"),
+                            "personality": config.get("personality", {}).get("personality_id", "unknown"),
+                            "working_dir": assistant_info.get("working_dir", "."),
+                            "user_name": assistant_info.get("user_name", "user"),
+                            "created_at": assistant_info.get("created_at", "unknown")
+                        })
         
         return sorted(assistants, key=lambda x: x["name"])
     
@@ -192,9 +222,10 @@ class AssistantConfig(ConfigLoader):
         config["rag"]["rag_files"] = rag_files
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Updated RAG files for '{assistant_name}': {', '.join(rag_files)}[/]")
@@ -227,9 +258,10 @@ class AssistantConfig(ConfigLoader):
             config["rag"]["rag_files"] = rag_files
             config["assistant"]["updated_at"] = self._get_timestamp()
             
-            # Save configuration
-            config_file = f"{assistant_name}.assistant.toml"
-            success = self.save_toml(config_file, config)
+            # Save configuration to assistant's context directory
+            assistant_context_dir = Path(f".ai_context/{assistant_name}")
+            config_file = assistant_context_dir / "config.toml"
+            success = self._save_toml_to_path(config_file, config)
             
             if success:
                 console.print(f"[green]✅ Added RAG file to '{assistant_name}': {rag_file}[/]")
@@ -256,9 +288,10 @@ class AssistantConfig(ConfigLoader):
             config["rag"]["rag_files"] = rag_files
             config["assistant"]["updated_at"] = self._get_timestamp()
             
-            # Save configuration
-            config_file = f"{assistant_name}.assistant.toml"
-            success = self.save_toml(config_file, config)
+            # Save configuration to assistant's context directory
+            assistant_context_dir = Path(f".ai_context/{assistant_name}")
+            config_file = assistant_context_dir / "config.toml"
+            success = self._save_toml_to_path(config_file, config)
             
             if success:
                 console.print(f"[green]✅ Removed RAG file from '{assistant_name}': {rag_file}[/]")
@@ -286,9 +319,10 @@ class AssistantConfig(ConfigLoader):
         
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             knowledge_path = config["rag"]["knowledge_base_path"]
@@ -310,9 +344,10 @@ class AssistantConfig(ConfigLoader):
         config["capabilities"]["rag_enabled"] = False
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Disabled RAG for '{assistant_name}'[/]")
@@ -337,9 +372,10 @@ class AssistantConfig(ConfigLoader):
         
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Updated RAG stats for '{assistant_name}': {document_count} documents[/]")
@@ -360,9 +396,10 @@ class AssistantConfig(ConfigLoader):
         if success:
             config["assistant"]["updated_at"] = self._get_timestamp()
             
-            # Save configuration
-            config_file = f"{assistant_name}.assistant.toml"
-            success = self.save_toml(config_file, config)
+            # Save configuration to assistant's context directory
+            assistant_context_dir = Path(f".ai_context/{assistant_name}")
+            config_file = assistant_context_dir / "config.toml"
+            success = self._save_toml_to_path(config_file, config)
             
             if success:
                 console.print(f"[green]✅ Applied personality '{personality_id}' to '{assistant_name}'[/]")
@@ -418,9 +455,10 @@ class AssistantConfig(ConfigLoader):
         config[section][key] = value
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Updated {section}.{key} for '{assistant_name}': {value}[/]")
@@ -465,9 +503,11 @@ class AssistantConfig(ConfigLoader):
         # Copy RAG files but keep them independent
         # Each assistant can have different RAG files loaded
         
-        # Save cloned configuration
-        config_file = f"{target_name}.assistant.toml"
-        success = self.save_toml(config_file, cloned_config)
+        # Save cloned configuration to target assistant's context directory
+        self._create_assistant_directories(target_name)
+        assistant_context_dir = Path(f".ai_context/{target_name}")
+        config_file = assistant_context_dir / f"{target_name}.assistant.toml"
+        success = self._save_toml_to_path(config_file, cloned_config)
         
         if success:
             console.print(f"[green]✅ Cloned assistant '{source_name}' to '{target_name}'[/]")
@@ -476,13 +516,20 @@ class AssistantConfig(ConfigLoader):
     
     def delete_assistant(self, assistant_name: str) -> bool:
         """Delete an assistant configuration."""
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.delete_config(config_file)
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
         
-        if success:
+        if not config_file.exists():
+            console.print(f"[yellow]⚠️ Assistant config not found: {assistant_name}[/]")
+            return False
+        
+        try:
+            config_file.unlink()
             console.print(f"[green]✅ Deleted assistant '{assistant_name}'[/]")
-        
-        return success
+            return True
+        except Exception as e:
+            console.print(f"[red]❌ Error deleting assistant '{assistant_name}': {e}[/]")
+            return False
     
     def _create_assistant_directories(self, assistant_name: str):
         """Create directory structure for an assistant."""
@@ -546,9 +593,10 @@ class AssistantConfig(ConfigLoader):
         
         config["assistant"]["updated_at"] = self._get_timestamp()
         
-        # Save configuration
-        config_file = f"{assistant_name}.assistant.toml"
-        success = self.save_toml(config_file, config)
+        # Save configuration to assistant's context directory
+        assistant_context_dir = Path(f".ai_context/{assistant_name}")
+        config_file = assistant_context_dir / "config.toml"
+        success = self._save_toml_to_path(config_file, config)
         
         if success:
             console.print(f"[green]✅ Updated {model_type} models for '{assistant_name}': {', '.join(models)}[/]")
@@ -634,7 +682,7 @@ class AssistantConfig(ConfigLoader):
             
             # Optionally remove configuration
             if not keep_config:
-                config_file = self.config_dir / f"{assistant_name}.assistant.toml"
+                config_file = self.config_dir / "config.toml"
                 if config_file.exists():
                     config_file.unlink()
             
@@ -649,3 +697,29 @@ class AssistantConfig(ConfigLoader):
         """Get current ISO timestamp."""
         from datetime import datetime
         return datetime.now().isoformat()
+    
+    def _save_toml_to_path(self, file_path: Path, config: Dict[str, Any]) -> bool:
+        """Save TOML configuration to a specific path."""
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            import toml
+            with open(file_path, 'w', encoding='utf-8') as f:
+                toml.dump(config, f)
+            return True
+        except Exception as e:
+            console.print(f"[red]❌ Error saving to {file_path}: {e}[/]")
+            return False
+    
+    def _load_toml_from_path(self, file_path: Path) -> Optional[Dict[str, Any]]:
+        """Load TOML configuration from a specific path."""
+        if not file_path.exists():
+            return None
+        
+        try:
+            import toml
+            with open(file_path, 'r', encoding='utf-8') as f:
+                config = toml.load(f)
+            return config
+        except Exception as e:
+            console.print(f"[red]❌ Error loading from {file_path}: {e}[/]")
+            return None

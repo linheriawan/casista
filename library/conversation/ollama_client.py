@@ -17,11 +17,13 @@ console = Console()
 class OllamaClient:
     """Client for communicating with Ollama models."""
     
-    def __init__(self, model: str, temperature: float = 0.1, max_tokens: int = 2048):
+    def __init__(self, model: str, temperature: float = 0.1, max_tokens: int = 2048, 
+                 streaming_config: dict = None):
         """Initialize Ollama client."""
         self.model = model
         self.temperature = temperature
         self.max_tokens = max_tokens
+        self.streaming_config = streaming_config or {}
         self.client = ollama
     
     def check_model_availability(self) -> bool:
@@ -57,7 +59,11 @@ class OllamaClient:
             return False
     
     def generate_response(self, messages: List[Dict], stream: bool = True) -> str:
-        """Generate response from the model."""
+        """Generate response from the model.
+        
+        Messages should already include system prompt and conversation history.
+        Model will see: [system_prompt, user1, assistant1, user2, assistant2, ...]
+        """
         try:
             if stream:
                 return self._generate_streaming(messages)
@@ -83,12 +89,21 @@ class OllamaClient:
         return response.get('message', {}).get('content', 'No response generated')
     
     def _generate_streaming(self, messages: List[Dict]) -> str:
-        """Generate streaming response with real-time display."""
+        """Generate streaming response with configurable display behavior."""
         response_text = ""
+        
+        # Check streaming configuration
+        show_placeholder = self.streaming_config.get("show_placeholder_for_reasoning", False)
+        placeholder_text = self.streaming_config.get("placeholder_text", "🤖 Processing...")
+        show_raw_stream = self.streaming_config.get("show_raw_stream", True)
         
         try:
             with Live(console=console, refresh_per_second=10) as live:
-                live.update(Panel("🤖 Thinking...", title=f"{self.model}"))
+                # Initial display based on configuration
+                if show_placeholder and not show_raw_stream:
+                    live.update(Panel(placeholder_text, title=f"{self.model}"))
+                else:
+                    live.update(Panel("🤖 Thinking...", title=f"{self.model}"))
                 
                 stream = self.client.chat(
                     model=self.model,
@@ -105,19 +120,29 @@ class OllamaClient:
                         content = chunk['message']['content']
                         response_text += content
                         
-                        # Update live display with current response
-                        live.update(Panel(
-                            response_text + "▊",  # Add cursor
-                            title=f"🤖 {self.model}",
-                            title_align="left"
-                        ))
+                        # Update display based on configuration
+                        if show_raw_stream:
+                            # Show real-time streaming content
+                            live.update(Panel(
+                                response_text + "▊",  # Add cursor
+                                title=f"🤖 {self.model}",
+                                title_align="left"
+                            ))
+                        else:
+                            # Keep showing placeholder
+                            live.update(Panel(placeholder_text, title=f"{self.model}"))
                 
-                # Final update without cursor
-                live.update(Panel(
-                    response_text,
-                    title=f"🤖 {self.model}",
-                    title_align="left"
-                ))
+                # Final update based on configuration
+                if show_placeholder and not show_raw_stream:
+                    # Show completion indicator only
+                    live.update(Panel("✅ Response complete", title=f"{self.model}"))
+                else:
+                    # Show final response
+                    live.update(Panel(
+                        response_text,
+                        title=f"🤖 {self.model}",
+                        title_align="left"
+                    ))
         
         except KeyboardInterrupt:
             console.print("[yellow]⚠️ Response generation interrupted[/]")
