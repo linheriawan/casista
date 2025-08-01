@@ -498,20 +498,54 @@ def run_speech_session(session_config, args):
     recognizer = sr.Recognizer()
     microphone = sr.Microphone()
     
+    # Check if configured speech backend is available
+    if speech_backend == "whisper":
+        try:
+            import whisper
+            whisper_model = whisper.load_model("base")
+            console.print(f"[green]✅ Using Whisper model for speech recognition[/]")
+        except ImportError:
+            console.print(f"[yellow]⚠️ Whisper not installed, falling back to Google[/]")
+            console.print("[dim]Install with: pip install openai-whisper[/]")
+            speech_backend = "google"
+    elif speech_backend == "vosk":
+        try:
+            import vosk
+            console.print(f"[green]✅ Using Vosk for speech recognition[/]")
+        except ImportError:
+            console.print(f"[yellow]⚠️ Vosk not installed, falling back to Google[/]")
+            console.print("[dim]Install with: pip install vosk[/]")
+            speech_backend = "google"
+    
     # Initialize text-to-speech
     tts_engine = pyttsx3.init()
     
-    # Configure voice if available
-    voice_config = session_config.get("voice", {})
-    if voice_config.get("voice_id"):
+    # Configure voice properly
+    if voice_id:
+        voices = tts_engine.getProperty('voices')
+        target_voice = None
+        
+        # Try to find voice by ID (number) or by voice object ID
         try:
-            tts_engine.setProperty('voice', voice_config["voice_id"])
-        except:
-            pass  # Voice not available
+            voice_index = int(voice_id)
+            if 0 <= voice_index < len(voices):
+                target_voice = voices[voice_index]
+        except ValueError:
+            # Try as voice ID string
+            for voice in voices:
+                if voice.id == voice_id:
+                    target_voice = voice
+                    break
+        
+        if target_voice:
+            tts_engine.setProperty('voice', target_voice.id)
+            console.print(f"[green]✅ Using voice: {target_voice.name}[/]")
+        else:
+            console.print(f"[yellow]⚠️ Voice ID '{voice_id}' not found, using default[/]")
     
-    # Set speech rate
-    speech_rate = voice_config.get("speech_rate", 200)
+    # Set speech rate  
     tts_engine.setProperty('rate', speech_rate)
+    console.print(f"[green]✅ Speech rate set to {speech_rate} WPM[/]")
     
     console.print("[green]🎤 Speech mode ready! Start speaking...[/]")
     console.print("[dim]Say 'exit', 'quit', or 'reset' for commands[/]")
@@ -536,15 +570,40 @@ def run_speech_session(session_config, args):
             
             console.print(" Processing...", end="")
             
-            # Recognize speech
+            # Recognize speech using configured backend
             try:
-                user_input = recognizer.recognize_google(audio)
+                if speech_backend == "whisper" and 'whisper_model' in locals():
+                    # Use Whisper for recognition
+                    import tempfile
+                    import wave
+                    
+                    # Save audio to temporary file for Whisper
+                    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_file:
+                        with wave.open(tmp_file.name, 'wb') as wav_file:
+                            wav_file.setnchannels(1)
+                            wav_file.setsampwidth(audio.sample_width)
+                            wav_file.setframerate(audio.sample_rate)
+                            wav_file.writeframes(audio.frame_data)
+                        
+                        # Transcribe with Whisper
+                        result = whisper_model.transcribe(tmp_file.name)
+                        user_input = result["text"].strip()
+                elif speech_backend == "vosk" and 'vosk' in locals():
+                    # Use Vosk for recognition
+                    user_input = recognizer.recognize_vosk(audio)
+                else:
+                    # Fall back to Google
+                    user_input = recognizer.recognize_google(audio)
+                
                 console.print(f" Heard: '{user_input}'")
             except sr.UnknownValueError:
                 console.print(" Could not understand audio")
                 continue
             except sr.RequestError as e:
                 console.print(f" Error with speech service: {e}")
+                continue
+            except Exception as e:
+                console.print(f" Speech recognition error: {e}")
                 continue
             
             # Handle commands
@@ -563,9 +622,17 @@ def run_speech_session(session_config, args):
             if response:
                 console.print(f"🤖 [{assistant_name}]: {response}")
                 
-                # Speak the response
-                tts_engine.say(response)
-                tts_engine.runAndWait()
+                # Filter out thinking tags for TTS
+                import re
+                tts_response = re.sub(r'<think>.*?</think>', '', response, flags=re.DOTALL | re.IGNORECASE)
+                tts_response = tts_response.strip()
+                
+                # Only speak if there's content after filtering
+                if tts_response:
+                    tts_engine.say(tts_response)
+                    tts_engine.runAndWait()
+                else:
+                    console.print("[dim](Response contained only thinking, not spoken)[/]")
             
         except sr.WaitTimeoutError:
             console.print(" Timeout - no speech detected")
