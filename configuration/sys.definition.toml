@@ -1,0 +1,34 @@
+[main]
+epilog="""
+Examples  :
+  # Basic Usage
+  coder anna chat                                    # Start chat session
+  coder anna chat --working-dir /projects/webapp     # Chat with specific working directory
+  coder anna speech                                  # Start voice session
+  coder anna image --prompt "A beautiful landscape"  # Generate image
+  
+  # Agent Management
+  coder create-agent                                    # Interactive agent creation
+  coder list-agents                                     # List all agents
+  coder clone-agent anna webcoder                    # Clone agent
+  coder delete-agent oldcoder                           # Delete agent
+  
+  # Knowledge Management
+  coder index-knowledge ./docs python_docs             # Index directory to RAG file
+  coder list-knowledge                                  # List RAG files
+  coder set-rag anna python_docs,web_dev           # Set RAG files for agent
+  
+  # Configuration
+  coder set-model anna qwen2.5-coder:7b            # Set model for agent
+  coder set-personality anna creative               # Set personality for agent
+  coder set-voice anna 5                           # Set voice for agent
+  coder configure anna                              # Interactive configuration
+"""
+ai_prompt = """User request: {user_input}{context_info}
+
+Please help with this image generation request. Provide:
+1. Enhanced prompt for better image quality
+2. Technical suggestions (style, composition, etc.)
+3. Any refinements based on conversation history
+
+Respond with the enhanced prompt and brief explanation."""

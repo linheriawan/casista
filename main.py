@@ -19,41 +19,21 @@ from helper.manage_voice import VoiceManager
 from helper.manage_model import ModelManager
 from helper.rag_knowledge import RAGKnowledgeManager
 from library.assistant_cfg import AssistantConfig
+from library.config_loader import ConfigLoader
 
 console = Console()
-
+SysCfg=ConfigLoader().load_toml("sys.definition.toml")
 
 def create_parser():
     """Create argument parser with all commands."""
+    # for key,data in SysCfg.items():
+    #     console.print(f"[orange]SYSCON '{key}' -> {data}[/]")
+    _epilog=SysCfg["main"]["epilog"]
     parser = argparse.ArgumentParser(
         prog="coder",
         description="AI Assistant with RAG, Voice, and Image Generation",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  # Basic Usage
-  coder mycoder chat                                    # Start chat session
-  coder mycoder chat --working-dir /projects/webapp     # Chat with specific working directory
-  coder mycoder speech                                  # Start voice session
-  coder mycoder image --prompt "A beautiful landscape"  # Generate image
-  
-  # Agent Management
-  coder create-agent                                    # Interactive agent creation
-  coder list-agents                                     # List all agents
-  coder clone-agent mycoder webcoder                    # Clone agent
-  coder delete-agent oldcoder                           # Delete agent
-  
-  # Knowledge Management
-  coder index-knowledge ./docs python_docs             # Index directory to RAG file
-  coder list-knowledge                                  # List RAG files
-  coder set-rag mycoder python_docs,web_dev           # Set RAG files for agent
-  
-  # Configuration
-  coder set-model mycoder qwen2.5-coder:7b            # Set model for agent
-  coder set-personality mycoder creative               # Set personality for agent
-  coder set-voice mycoder 5                           # Set voice for agent
-  coder configure mycoder                              # Interactive configuration
-        """
+        epilog=_epilog
     )
     
     # Main assistant execution
@@ -283,7 +263,6 @@ def run_assistant_session(args):
         user_cwd = Path.cwd()
     
     session_working_dir = args.working_dir or user_cwd
-    
     
     session_config = assistant_config.load_assistant_for_session(
         args.assistant_name, 
@@ -938,15 +917,7 @@ def generate_conversational_image(session, chat_manager, generator, user_input, 
         context_info = f"\\nPrevious image: '{last_image['prompt']}' → {last_image['path']}"
     
     # Get AI assistance for understanding the request
-    ai_prompt = f"""User request: {user_input}{context_info}
-
-Please help with this image generation request. Provide:
-1. Enhanced prompt for better image quality
-2. Technical suggestions (style, composition, etc.)
-3. Any refinements based on conversation history
-
-Respond with the enhanced prompt and brief explanation."""
-    
+    ai_prompt = SysCfg["main"]["ai_prompt"].format(user_input=user_input, context_info=context_info)    
     response_data = chat_manager.send_message(ai_prompt)
     
     if response_data.get("error"):
@@ -1147,7 +1118,6 @@ def main():
     except Exception as e:
         console.print(f"[red]❌ Error: {e}[/]")
         console.print("[yellow]💡 Make sure all dependencies are installed and Ollama is running[/]")
-
 
 if __name__ == "__main__":
     main()

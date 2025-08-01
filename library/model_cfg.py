@@ -13,7 +13,6 @@ from .config_loader import ConfigLoader
 
 console = Console()
 
-
 class ModelConfig(ConfigLoader):
     """Manages AI model configurations and settings."""
     
