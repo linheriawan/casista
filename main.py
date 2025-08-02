@@ -570,7 +570,7 @@ def run_speech_session(session_config, args):
             
             with microphone as source:
                 # Listen for audio with timeout
-                audio = recognizer.listen(source, timeout=10, phrase_time_limit=10)
+                audio = recognizer.listen(source, timeout=30, phrase_time_limit=300)
             
             console.print(" Processing...", end="")
             

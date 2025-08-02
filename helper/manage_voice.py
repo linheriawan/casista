@@ -123,6 +123,7 @@ And sings of places never known.
             
             # Set voice and speak
             engine.setProperty('voice', target_voice.id)
+            engine.setProperty('rate', 180)
             engine.say(test_text)
             engine.runAndWait()
             engine.stop()
@@ -529,7 +530,7 @@ And sings of places never known.
 [bold cyan]Text-to-Speech:[/]
 • Voice ID: {voice_settings.get('voice_id', 'Not set')}
 • Voice Name: {voice_settings.get('voice_name', 'Not set')}
-• Speech Rate: {voice_settings.get('speech_rate', 200)}
+• Speech Rate: {voice_settings.get('speech_rate', 180)}
 
 [bold cyan]Speech Recognition:[/]
 • Backend: {voice_settings.get('speech_backend', 'google')}

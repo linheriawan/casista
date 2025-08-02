@@ -45,7 +45,7 @@ sudo dnf install portaudio-devel
 
 **Quick Setup**:
 ```bash
-git clone <your-repo-url>
+git clone https://github.com/linheriawan/casista
 cd casista
 
 # Setup environment and dependencies (creates venv, installs packages)
@@ -153,7 +153,7 @@ coder list-models
 coder --download-model qwen2.5-coder:7b
 
 # Set model for an assistant
-coder --set-model mycoder qwen2.5-coder:7b
+coder --set-model anna qwen2.5-coder:7b
 
 # Show model information
 coder --model-info qwen2.5-coder:3b
@@ -237,7 +237,7 @@ print("Hello, World!")  # Print greeting message
 ## 🏗️ Architecture
 
 ### Modular Structure
-```
+```bash
 casista/
 ├── main.py                     # Unified CLI interface
 ├── library/                    # Core functionality
@@ -411,7 +411,7 @@ coder support chat --query "How do I authenticate with our API?"
 
 ## 📝 License
 
-MIT License - see LICENSE file for details.
+BSD 3-Clause License - see LICENSE file for details.
 
 ## 🤝 Contributing
 

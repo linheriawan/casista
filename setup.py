@@ -168,7 +168,7 @@ def main():
     console.print("\n[cyan]Next steps:[/]")
     console.print("1. [dim]python3 install.py[/] - Install the 'coder' command globally")
     console.print("2. [dim]coder --list-models[/] - Check available Ollama models")
-    console.print("3. [dim]coder qwen2.5-coder:3b mycoder chat[/] - Start chatting!")
+    console.print("3. [dim]coder anna chat[/] - Start chatting!")
     
     if not speech_success or not rag_success or not docs_success:
         console.print("\n[cyan]Optional features:[/]")

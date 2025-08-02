@@ -29,12 +29,13 @@ class AssistantConfig(ConfigLoader):
         self.personality_config = PersonalityConfig(config_dir)
         self.model_config = ModelConfig(config_dir)
         self.prompt_config = PromptConfig(config_dir)
+        self.assist_conf = config_dir
     
     def create_assistant(self, assistant_name: str, model: str = "qwen2.5-coder:3b",
                         personality: str = "coder", working_dir: Path = None,
                         user_name: str = None) -> bool:
         """Create a new assistant configuration."""
-        
+        assist_conf=self.get_config(assistant_name)
         # Auto-detect user if not provided
         if user_name is None:
             try:
@@ -139,28 +140,25 @@ class AssistantConfig(ConfigLoader):
         
         # Apply personality settings
         self._apply_personality(config, personality)
-        
-        # Create assistant's context directory structure
-        self._create_assistant_directories(assistant_name)
-        
+
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Created assistant '{assistant_name}' with model '{model}' and personality '{personality}'[/]")
             console.print(f"[dim]Working directory: {working_dir}[/]")
             console.print(f"[dim]Assistant context: .ai_context/{assistant_name}/[/]")
-            console.print(f"[dim]Configuration saved as: {config_file}[/]")
+            console.print(f"[dim]Configuration saved as: {self.assist_conf}[/]")
         
         return success
     
     def get_assistant(self, assistant_name: str) -> Optional[Dict[str, Any]]:
         """Get assistant configuration."""
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        return self._load_toml_from_path(config_file)
+        return self._load_toml_from_path(self.get_config(assistant_name))
+
+    def get_config(self,name:str,fn:str="config.toml") -> Path:
+        self.assist_conf=Path(f".ai_context/{name}") / fn
+        return self.assist_conf
     
     def list_assistants(self) -> List[Dict[str, str]]:
         """List all available assistants."""
@@ -223,9 +221,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Updated RAG files for '{assistant_name}': {', '.join(rag_files)}[/]")
@@ -259,9 +255,7 @@ class AssistantConfig(ConfigLoader):
             config["assistant"]["updated_at"] = self._get_timestamp()
             
             # Save configuration to assistant's context directory
-            assistant_context_dir = Path(f".ai_context/{assistant_name}")
-            config_file = assistant_context_dir / "config.toml"
-            success = self._save_toml_to_path(config_file, config)
+            success = self._save_toml_to_path(self.assist_conf, config)
             
             if success:
                 console.print(f"[green]✅ Added RAG file to '{assistant_name}': {rag_file}[/]")
@@ -289,9 +283,7 @@ class AssistantConfig(ConfigLoader):
             config["assistant"]["updated_at"] = self._get_timestamp()
             
             # Save configuration to assistant's context directory
-            assistant_context_dir = Path(f".ai_context/{assistant_name}")
-            config_file = assistant_context_dir / "config.toml"
-            success = self._save_toml_to_path(config_file, config)
+            success = self._save_toml_to_path(self.assist_conf, config)
             
             if success:
                 console.print(f"[green]✅ Removed RAG file from '{assistant_name}': {rag_file}[/]")
@@ -320,9 +312,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             knowledge_path = config["rag"]["knowledge_base_path"]
@@ -345,9 +335,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Disabled RAG for '{assistant_name}'[/]")
@@ -373,9 +361,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Updated RAG stats for '{assistant_name}': {document_count} documents[/]")
@@ -397,9 +383,7 @@ class AssistantConfig(ConfigLoader):
             config["assistant"]["updated_at"] = self._get_timestamp()
             
             # Save configuration to assistant's context directory
-            assistant_context_dir = Path(f".ai_context/{assistant_name}")
-            config_file = assistant_context_dir / "config.toml"
-            success = self._save_toml_to_path(config_file, config)
+            success = self._save_toml_to_path(self.assist_conf, config)
             
             if success:
                 console.print(f"[green]✅ Applied personality '{personality_id}' to '{assistant_name}'[/]")
@@ -456,9 +440,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Updated {section}.{key} for '{assistant_name}': {value}[/]")
@@ -504,9 +486,7 @@ class AssistantConfig(ConfigLoader):
         # Each assistant can have different RAG files loaded
         
         # Save cloned configuration to target assistant's context directory
-        self._create_assistant_directories(target_name)
-        assistant_context_dir = Path(f".ai_context/{target_name}")
-        config_file = assistant_context_dir / f"{target_name}.assistant.toml"
+        config_file = self.get_config(assistant_name,f"{target_name}.assistant.toml")
         success = self._save_toml_to_path(config_file, cloned_config)
         
         if success:
@@ -516,64 +496,23 @@ class AssistantConfig(ConfigLoader):
     
     def delete_assistant(self, assistant_name: str) -> bool:
         """Delete an assistant configuration."""
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
         
-        if not config_file.exists():
+        if not self.assist_conf.exists():
             console.print(f"[yellow]⚠️ Assistant config not found: {assistant_name}[/]")
             return False
         
         try:
-            config_file.unlink()
+            self.assist_conf.unlink()
             console.print(f"[green]✅ Deleted assistant '{assistant_name}'[/]")
             return True
         except Exception as e:
             console.print(f"[red]❌ Error deleting assistant '{assistant_name}': {e}[/]")
             return False
-    
-    def _create_assistant_directories(self, assistant_name: str):
-        """Create directory structure for an assistant."""
-        base_dir = Path(f".ai_context/{assistant_name}")
         
-        # Create assistant-specific directories
-        directories = [
-            base_dir,
-            base_dir / "voice",      # For voice recordings/cache
-            base_dir / "context",    # For conversation context
-            base_dir / "models",     # For assistant-specific model cache
-            base_dir / "logs"        # For assistant logs
-        ]
-        
-        for directory in directories:
-            directory.mkdir(parents=True, exist_ok=True)
-        
-        # Create global knowledge directory at project root (shared across assistants)
-        knowledge_dir = Path("knowledge")
-        knowledge_dir.mkdir(exist_ok=True)
-        
-        console.print(f"[dim]📁 Created assistant directories in .ai_context/{assistant_name}/[/]")
-        console.print(f"[dim]📚 Ensured global knowledge directory: knowledge/[/]")
-    
-    def get_assistant_context_dir(self, assistant_name: str) -> Path:
-        """Get the context directory for an assistant."""
-        return Path(f".ai_context/{assistant_name}")
-    
     def get_global_knowledge_dir(self) -> Path:
         """Get the global knowledge directory (shared across all assistants)."""
         return Path("knowledge")
-    
-    def get_session_images_dir(self, session_working_dir: Path, subdir: str = "generated_images") -> Path:
-        """Get the images directory for current session (in working directory)."""
-        return Path(session_working_dir) / subdir
-    
-    def get_assistant_voice_dir(self, assistant_name: str) -> Path:
-        """Get the voice directory for an assistant."""
-        return self.get_assistant_context_dir(assistant_name) / "voice"
-    
-    def get_assistant_models_dir(self, assistant_name: str) -> Path:
-        """Get the models directory for an assistant."""
-        return self.get_assistant_context_dir(assistant_name) / "models"
-    
+            
     def set_assistant_model_preference(self, assistant_name: str, model_type: str, models: List[str]) -> bool:
         """Set model preferences for an assistant in their context directory."""
         config = self.get_assistant(assistant_name)
@@ -594,9 +533,7 @@ class AssistantConfig(ConfigLoader):
         config["assistant"]["updated_at"] = self._get_timestamp()
         
         # Save configuration to assistant's context directory
-        assistant_context_dir = Path(f".ai_context/{assistant_name}")
-        config_file = assistant_context_dir / "config.toml"
-        success = self._save_toml_to_path(config_file, config)
+        success = self._save_toml_to_path(self.assist_conf, config)
         
         if success:
             console.print(f"[green]✅ Updated {model_type} models for '{assistant_name}': {', '.join(models)}[/]")
@@ -648,11 +585,8 @@ class AssistantConfig(ConfigLoader):
         # Set assistant context directories
         session_working_dir = Path(session_config["session"]["working_dir"])
         session_config["paths"] = {
-            "context_dir": str(self.get_assistant_context_dir(assistant_name)),
             "knowledge_dir": str(self.get_global_knowledge_dir()),  # Global knowledge directory
-            "images_dir": str(self.get_session_images_dir(session_working_dir)),  # Images in working dir
-            "voice_dir": str(self.get_assistant_voice_dir(assistant_name)),
-            "models_dir": str(self.get_assistant_models_dir(assistant_name))
+            "context_dir" : f".ai_context/{assistant_name}"
         }
         
         console.print(f"[green]🤖 Loaded assistant '{assistant_name}' for session[/]")
@@ -662,7 +596,7 @@ class AssistantConfig(ConfigLoader):
     
     def cleanup_assistant_data(self, assistant_name: str, keep_config: bool = True) -> bool:
         """Clean up assistant data (context, cache, etc.) but optionally keep configuration."""
-        context_dir = self.get_assistant_context_dir(assistant_name)
+        context_dir = Path(f".ai_context/{assistant_name}")
         
         if not context_dir.exists():
             console.print(f"[yellow]⚠️ No context directory found for '{assistant_name}'[/]")
