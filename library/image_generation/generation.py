@@ -57,7 +57,7 @@ class ImageGenerator:
             "stabilityai/stable-diffusion-2-1",
             "CompVis/stable-diffusion-v1-4"
         ]
-        self.output_dir = output_dir or Path.cwd() / "generated_images"
+        self.output_dir = output_dir or Path.cwd() 
         self.output_dir.mkdir(exist_ok=True)
         
         # Model cache

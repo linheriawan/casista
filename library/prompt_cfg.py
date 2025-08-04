@@ -171,7 +171,7 @@ class PromptConfig(ConfigLoader):
         # Image generation
         image = config.get("image", {})
         variables["image_models"] = ", ".join(image.get("models", []))
-        variables["output_dir"] = image.get("output_dir", "./generated_images")
+        variables["output_dir"] = image.get("output_dir", "./")
         
         # Research context
         research = config.get("research", {})
@@ -257,7 +257,7 @@ class PromptConfig(ConfigLoader):
             "rag_knowledge_path": ".ai_context/knowledge",
             "primary_language": "Python",
             "image_models": "Stable Diffusion v1.5, DALL-E 2",
-            "output_dir": "./generated_images",
+            "output_dir": "./",
             "research_domains": "Technology, Science, Software Development",
             "sources_available": "Academic papers, Documentation, Web sources"
         }

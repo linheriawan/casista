@@ -73,7 +73,7 @@ class SessionManager:
         if self.image_generator is None:
             image_config = self.config.get("image", {})
             models = image_config.get("models", ["hakurei/waifu-diffusion"])
-            images_dir = self.working_dir / image_config.get("output_subdir", "generated_images")
+            images_dir = self.working_dir / image_config.get("output_subdir", "./")
             
             self.image_generator = ImageGenerator(models, images_dir)
             console.print("[dim]🎨 Image generator initialized[/]")

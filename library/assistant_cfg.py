@@ -92,7 +92,7 @@ class AssistantConfig(ConfigLoader):
             "image": {
                 "enabled": False,
                 "models": ["hakurei/waifu-diffusion"],
-                "output_subdir": "generated_images",  # Subdirectory in working_dir for images
+                "output_subdir": "./",  # Subdirectory in working_dir for images
                 "default_width": 512,
                 "default_height": 512
             },
@@ -480,7 +480,7 @@ class AssistantConfig(ConfigLoader):
         if new_working_dir:
             working_dir = Path(new_working_dir).absolute()
             cloned_config["assistant"]["working_dir"] = str(working_dir)
-            cloned_config["image"]["output_dir"] = f"{working_dir}/generated_images"
+            cloned_config["image"]["output_dir"] = f"{working_dir}/"
         
         # Copy RAG files but keep them independent
         # Each assistant can have different RAG files loaded
