@@ -58,7 +58,7 @@ class OllamaClient:
             console.print(f"[red]❌ Error pulling model: {e}[/]")
             return False
     
-    def generate_response(self, messages: List[Dict], stream: bool = True) -> str:
+    def generate_response(self, messages: List[Dict], stream: bool = True, callback=None) -> str:
         """Generate response from the model.
         
         Messages should already include system prompt and conversation history.
@@ -66,7 +66,7 @@ class OllamaClient:
         """
         try:
             if stream:
-                return self._generate_streaming(messages)
+                return self._generate_streaming(messages, callback)
             else:
                 return self._generate_simple(messages)
         
@@ -88,69 +88,48 @@ class OllamaClient:
         
         return response.get('message', {}).get('content', 'No response generated')
     
-    def _generate_streaming(self, messages: List[Dict]) -> str:
-        """Generate streaming response with configurable display behavior."""
+    def _generate_streaming(self, messages: List[Dict], callback=None) -> str:
+        """Generate streaming response with callback support for fullscreen display."""
         response_text = ""
         
-        # Check streaming configuration
-        show_placeholder = self.streaming_config.get("show_placeholder_for_reasoning", False)
-        placeholder_text = self.streaming_config.get("placeholder_text", "🤖 Processing...")
-        show_raw_stream = self.streaming_config.get("show_raw_stream", True)
-        
         try:
-            with Live(console=console, refresh_per_second=10) as live:
-                # Initial display based on configuration
-                if show_placeholder and not show_raw_stream:
-                    live.update(Panel(placeholder_text, title=f"{self.model}"))
-                else:
-                    live.update(Panel("🤖 Thinking...", title=f"{self.model}"))
-                
-                stream = self.client.chat(
-                    model=self.model,
-                    messages=messages,
-                    stream=True,
-                    options={
-                        "temperature": self.temperature,
-                        "num_predict": self.max_tokens
-                    }
-                )
-                
-                for chunk in stream:
-                    if 'message' in chunk and 'content' in chunk['message']:
-                        content = chunk['message']['content']
-                        response_text += content
-                        
-                        # Update display based on configuration
-                        if show_raw_stream:
-                            # Show real-time streaming content
-                            live.update(Panel(
-                                response_text + "▊",  # Add cursor
-                                title=f"🤖 {self.model}",
-                                title_align="left"
-                            ))
-                        else:
-                            # Keep showing placeholder
-                            live.update(Panel(placeholder_text, title=f"{self.model}"))
-                
-                # Final update based on configuration
-                if show_placeholder and not show_raw_stream:
-                    # Show completion indicator only
-                    live.update(Panel("✅ Response complete", title=f"{self.model}"))
-                else:
-                    # Show final response
-                    live.update(Panel(
-                        response_text,
-                        title=f"🤖 {self.model}",
-                        title_align="left"
-                    ))
+            # Signal start of streaming
+            if callback:
+                callback("start", "")
+            
+            stream = self.client.chat(
+                model=self.model,
+                messages=messages,
+                stream=True,
+                options={
+                    "temperature": self.temperature,
+                    "num_predict": self.max_tokens
+                }
+            )
+            
+            for chunk in stream:
+                if 'message' in chunk and 'content' in chunk['message']:
+                    content = chunk['message']['content']
+                    response_text += content
+                    
+                    # Send chunk to callback for fullscreen display
+                    if callback:
+                        callback("chunk", response_text)
+            
+            # Signal completion
+            if callback:
+                callback("complete", response_text)
         
         except KeyboardInterrupt:
-            console.print("[yellow]⚠️ Response generation interrupted[/]")
+            if callback:
+                callback("interrupted", response_text if response_text else "Response interrupted")
             return response_text if response_text else "Response interrupted"
         
         except Exception as e:
-            console.print(f"[red]❌ Streaming error: {e}[/]")
-            return response_text if response_text else f"Error: {e}"
+            error_msg = f"Streaming error: {e}"
+            if callback:
+                callback("error", error_msg)
+            return response_text if response_text else error_msg
         
         return response_text
     

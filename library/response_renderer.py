@@ -1,17 +1,15 @@
 #!/usr/bin/env python3
 """
-Response Renderer - Advanced rendering for AI responses with multiple display modes.
+Response Renderer - Advanced rendering for AI responses with fullscreen display.
 
-Provides unified rendering for console output, speech synthesis, and advanced layouts
-including tables, streaming, progress bars, and window-style positioning.
+Provides unified rendering for console output, speech synthesis, and fullscreen layouts
+including tables, live chat updates, and real-time streaming responses.
 """
 
-import sys
-from typing import Dict, Any, Optional, Generator
+from typing import Dict, Any, Optional
 from rich.console import Console
 from rich.table import Table
 from rich.panel import Panel
-from rich.progress import Progress, TaskID
 from rich.live import Live
 from rich.layout import Layout
 
@@ -28,9 +26,7 @@ class ResponseRenderer:
         """
         self.console = console or Console()
         self.speech_handler = speech_handler
-        self.current_line = 0
-        self.layout_zones = {}  # For window-style rendering
-        self.live_display = None  # For streaming updates
+        self.live_display = None  # For fullscreen Live display
     
     def render_response(self, mode: str, assistant_name: str, response_data: Dict[str, Any], 
                        style: str = "chat") -> bool:
@@ -106,61 +102,6 @@ class ResponseRenderer:
         )
         self.console.print(panel)
     
-    def render_stream(self, assistant_name: str, stream_generator: Generator, 
-                     show_reasoning: bool = True) -> Dict[str, Any]:
-        """Render real-time streaming response with live updates.
-        
-        Args:
-            assistant_name: Name of the assistant
-            stream_generator: Generator yielding response chunks
-            show_reasoning: Whether to display reasoning separately
-            
-        Returns:
-            Dict with final response data
-        """
-        response_text = ""
-        reasoning_text = ""
-        
-        with Live(console=self.console, refresh_per_second=4) as live:
-            for chunk in stream_generator:
-                if chunk.get('type') == 'reasoning':
-                    reasoning_text += chunk.get('content', '')
-                else:
-                    response_text += chunk.get('content', '')
-                
-                # Update live display
-                display_content = f"🤖 [{assistant_name}]: {response_text}"
-                if reasoning_text and show_reasoning:
-                    display_content += f"\n\n[dim]💭 Reasoning: {reasoning_text}[/]"
-                
-                live.update(display_content)
-        
-        return {
-            'content': response_text,
-            'reasoning': reasoning_text,
-            'has_reasoning': bool(reasoning_text)
-        }
-    
-    def render_progress(self, task_name: str, progress_value: float, total: float = 100.0,
-                       override_line: bool = True):
-        """Render progress bar with optional line override.
-        
-        Args:
-            task_name: Name of the task
-            progress_value: Current progress value
-            total: Total progress value
-            override_line: Whether to override current line (like htop)
-        """
-        if override_line:
-            # Move cursor up and clear line for htop-style updates
-            sys.stdout.write('\033[F\033[K')
-        
-        percentage = (progress_value / total) * 100
-        bar_length = 40
-        filled_length = int(bar_length * progress_value // total)
-        
-        bar = '█' * filled_length + '░' * (bar_length - filled_length)
-        self.console.print(f"{task_name}: [{bar}] {percentage:.1f}%")
     
     def render_table(self, data: Dict[str, Any], title: str = None, 
                     columns: Dict[str, str] = None) -> Table:
@@ -201,56 +142,231 @@ class ResponseRenderer:
         self.console.print(table)
         return table
     
-    def create_layout_zone(self, zone_name: str, start_line: int, height: int) -> Dict[str, int]:
-        """Create a layout zone for window-style positioning.
+    
+    
+    def initialize_fullscreen_mode(self, header_data: list, initial_footer: str = "Ready...", title: str = "📊 Session Info"):
+        """Initialize htop-style fullscreen mode with live layout management.
         
         Args:
-            zone_name: Unique name for the zone
-            start_line: Starting line number
-            height: Height in lines
-            
-        Returns:
-            Zone configuration dictionary
+            header_data: System info data for header table
+            initial_footer: Initial footer message
+            title: Custom title for header panel
         """
-        zone_config = {
-            'start_line': start_line,
-            'height': height,
-            'current_line': start_line,
-            'end_line': start_line + height - 1
+        # Store layout state
+        self.fullscreen_state = {
+            'header_data': header_data,
+            'chat_messages': [],
+            'footer_message': initial_footer,
+            'header_title': title,
+            'is_active': True
         }
         
-        self.layout_zones[zone_name] = zone_config
-        return zone_config
+        # Create initial layout
+        initial_layout = self._create_layout()
+        
+        # Start Live display for in-place updates (screen=False to allow input prompt)
+        self.live_display = Live(initial_layout, refresh_per_second=10, screen=False)
+        self.live_display.start()
     
-    def render_in_zone(self, zone_name: str, content: str, clear_zone: bool = False):
-        """Render content in a specific layout zone.
+    def add_chat_message(self, role: str, message: str, assistant_name: str = "Assistant"):
+        """Add a message to the chat area and refresh layout.
         
         Args:
-            zone_name: Name of the zone to render in
-            content: Content to display
-            clear_zone: Whether to clear the zone first
+            role: "user" or "assistant"
+            message: Message content
+            assistant_name: Name of assistant for display
         """
-        if zone_name not in self.layout_zones:
-            self.console.print(f"[yellow]⚠️ Zone '{zone_name}' not found[/]")
+        if not hasattr(self, 'fullscreen_state') or not self.fullscreen_state.get('is_active'):
+            # Fallback to regular rendering if fullscreen not active
+            if role == "assistant":
+                self.console.print(f"[bold cyan]🤖 {assistant_name}:[/] {message}")
+            else:
+                self.console.print(f"[bold green]👤 You:[/] {message}")
             return
         
-        zone = self.layout_zones[zone_name]
+        # Format message for chat display
+        if role == "assistant":
+            formatted_msg = f"[bold cyan]🤖 {assistant_name}:[/] {message}"
+        else:
+            formatted_msg = f"[bold green]👤 You:[/] {message}"
         
-        if clear_zone:
-            # Clear the zone
-            for line in range(zone['height']):
-                sys.stdout.write(f'\033[{zone["start_line"] + line};0H\033[K')
-            zone['current_line'] = zone['start_line']
+        # Add to chat history
+        self.fullscreen_state['chat_messages'].append(formatted_msg)
         
-        # Position cursor and render content
-        sys.stdout.write(f'\033[{zone["current_line"]};0H')
-        self.console.print(content)
-        zone['current_line'] += content.count('\n') + 1
+        # Keep only last 20 messages for better scrolling in limited space
+        if len(self.fullscreen_state['chat_messages']) > 20:
+            self.fullscreen_state['chat_messages'] = self.fullscreen_state['chat_messages'][-20:]
+        
+        # Update Live display
+        self._update_live_display()
     
-    def clear_zones(self):
-        """Clear all defined layout zones."""
-        for zone_name in self.layout_zones:
-            self.render_in_zone(zone_name, "", clear_zone=True)
+    def update_footer_message(self, message: str):
+        """Update footer status message and refresh layout.
+        
+        Args:
+            message: New footer message
+        """
+        if hasattr(self, 'fullscreen_state') and self.fullscreen_state.get('is_active'):
+            self.fullscreen_state['footer_message'] = message
+            self._update_live_display()
+        else:
+            # Fallback to regular status message
+            self.console.print(f"[dim]{message}[/]")
+    
+    def _update_live_display(self):
+        """Update the live display with current layout state."""
+        if not hasattr(self, 'fullscreen_state') or not self.fullscreen_state.get('is_active'):
+            return
+        
+        if not hasattr(self, 'live_display') or not self.live_display:
+            return
+        
+        # Create updated layout
+        layout = self._create_layout()
+        
+        # Update the live display in-place (no screen clearing!)
+        self.live_display.update(layout)
+    
+    def _create_layout(self) -> Layout:
+        """Create the layout structure with current state."""
+        state = self.fullscreen_state
+        
+        # Create layout with input box
+        layout = Layout()
+        layout.split_column(
+            Layout(name="header", size=6),       # Session info (needs space for rows + borders)
+            Layout(name="status", size=2),       # Status bar (needs space for borders)
+            Layout(name="input_box", size=2),     # Input box (compact)
+            Layout(name="content", ratio=1)     # Chat conversation (flexible)
+        )
+        
+        # Header: Compact system info table
+        header_table = Table(show_header=False, box=None, padding=(0, 1))
+        header_table.add_column("Prop1", style="cyan", no_wrap=True, min_width=10)
+        header_table.add_column("Val1", style="white", no_wrap=True, min_width=12)
+        header_table.add_column("Prop2", style="cyan", no_wrap=True, min_width=10)
+        header_table.add_column("Val2", style="white", no_wrap=True, min_width=12)
+        header_table.add_column("Prop3", style="cyan", no_wrap=True, min_width=10)
+        header_table.add_column("Val3", style="white", no_wrap=True, min_width=12)
+        
+        for item in state['header_data']:
+            prop1 = item.get("Property", "")
+            val1 = item.get("Value", "")
+            prop2 = item.get("Property2", "")
+            val2 = item.get("Value2", "")
+            prop3 = item.get("Property3", "")
+            val3 = item.get("Value3", "")
+            header_table.add_row(prop1, val1, prop2, val2, prop3, val3)
+        
+        # Use stored dynamic title
+        header_title = state.get('header_title', '📊 Session Info')
+        layout["header"].update(Panel(header_table, title=header_title, 
+                                    border_style="green", padding=(0, 1)))
+        
+        # Status: Between header and content
+        layout["status"].update(Panel(state['footer_message'], title="📝 Status", 
+                                    border_style="yellow", padding=(0, 1)))
+        
+        # Content: Chat messages (automatically scrollable with newest at bottom)
+        if state['chat_messages']:
+            # Show most recent messages that fit in the space
+            chat_content = "\n".join(state['chat_messages'])
+        else:
+            chat_content = "[dim]Conversation will appear here...[/]"
+        
+        content_panel = Panel(chat_content, title="💬 Chat", border_style="blue", padding=(0, 1))
+        layout["content"].update(content_panel)
+        
+        # Input box: Compact input area with border
+        layout["input_box"].update(Panel("", title="💬 Input", border_style="cyan", padding=(0, 1)))
+        
+        return layout
+    
+    def pause_live_display(self):
+        """Pause live display to allow user input without interference."""
+        if hasattr(self, 'live_display') and self.live_display:
+            try:
+                self.live_display.stop()
+                self._display_was_paused = True
+            except:
+                pass  # Ignore errors during pause
+    
+    def resume_live_display(self):
+        """Resume live display after user input is complete."""
+        if hasattr(self, 'fullscreen_state') and self.fullscreen_state.get('is_active'):
+            if hasattr(self, '_display_was_paused') and self._display_was_paused:
+                try:
+                    # Recreate and start live display
+                    layout = self._create_layout()
+                    self.live_display = Live(layout, refresh_per_second=10, screen=False)
+                    self.live_display.start()
+                    self._display_was_paused = False
+                except:
+                    pass  # Ignore errors during resume
+    
+    def handle_streaming_response(self, event: str, content: str, assistant_name: str):
+        """Handle streaming response events from AI model.
+        
+        Args:
+            event: "start", "chunk", "complete", "interrupted", or "error"
+            content: Current content (partial or complete)
+            assistant_name: Name of assistant
+        """
+        if not hasattr(self, 'fullscreen_state') or not self.fullscreen_state.get('is_active'):
+            # Fallback to regular rendering if fullscreen not active
+            if event == "chunk":
+                # Show streaming content with cursor
+                print(f"\r🤖 {assistant_name}: {content}▊", end="", flush=True)
+            elif event == "complete":
+                # Final output
+                print(f"\r🤖 {assistant_name}: {content}")
+            return
+        
+        if event == "start":
+            # Update status to thinking
+            self.update_footer_message("🤖 Thinking...")
+            # Add placeholder message that will be updated
+            self._streaming_message_index = len(self.fullscreen_state['chat_messages'])
+            self.fullscreen_state['chat_messages'].append(f"[bold cyan]🤖 {assistant_name}:[/] [dim]Thinking...[/]")
+            self._update_live_display()
+            
+        elif event == "chunk":
+            # Update the streaming message in place
+            if hasattr(self, '_streaming_message_index'):
+                formatted_msg = f"[bold cyan]🤖 {assistant_name}:[/] {content}[dim]▊[/]"
+                self.fullscreen_state['chat_messages'][self._streaming_message_index] = formatted_msg
+                self._update_live_display()
+                
+        elif event == "complete":
+            # Finalize the message
+            if hasattr(self, '_streaming_message_index'):
+                formatted_msg = f"[bold cyan]🤖 {assistant_name}:[/] {content}"
+                self.fullscreen_state['chat_messages'][self._streaming_message_index] = formatted_msg
+                self._update_live_display()
+                delattr(self, '_streaming_message_index')
+            self.update_footer_message("Ready for input...")
+            
+        elif event in ["interrupted", "error"]:
+            # Handle errors
+            if hasattr(self, '_streaming_message_index'):
+                formatted_msg = f"[bold cyan]🤖 {assistant_name}:[/] [red]{content}[/]"
+                self.fullscreen_state['chat_messages'][self._streaming_message_index] = formatted_msg
+                self._update_live_display()
+                delattr(self, '_streaming_message_index')
+            self.update_footer_message(f"❌ {event.title()}")
+    
+    def exit_fullscreen_mode(self):
+        """Exit fullscreen mode and return to normal rendering."""
+        if hasattr(self, 'fullscreen_state'):
+            self.fullscreen_state['is_active'] = False
+        
+        # Stop live display properly
+        if hasattr(self, 'live_display') and self.live_display:
+            try:
+                self.live_display.stop()
+            except:
+                pass  # Ignore errors during cleanup
+            self.live_display = None
     
     def set_speech_handler(self, speech_handler):
         """Update the speech handler for TTS functionality."""

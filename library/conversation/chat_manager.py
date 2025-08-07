@@ -49,7 +49,7 @@ class ChatManager:
                 raise RuntimeError(f"Failed to pull model: {self.model}")
     
     def send_message(self, user_input: str, system_prompt: str = None, 
-                    stream: bool = True) -> Dict[str, Any]:
+                    stream: bool = True, callback=None) -> Dict[str, Any]:
         """Send a message and get AI response with parsed content.
         
         System prompt is automatically managed:
@@ -74,7 +74,7 @@ class ChatManager:
         
         # Generate response (model sees system prompt + conversation history)
         try:
-            response = self.ollama_client.generate_response(messages, stream=stream)
+            response = self.ollama_client.generate_response(messages, stream=stream, callback=callback)
             
             # Add assistant response to context (with parsing)
             updated_messages = self.context_manager.add_message("assistant", response, messages)

@@ -81,13 +81,15 @@ class OperationHandler:
         
         # Prepare all session components
         try:
-            components = self.prepare(args)
+            components = self.prepare(args, session_config)
         except RuntimeError as e:
             renderer.render_error(str(e))
             return False
         
-        # Display session info
-        self._display_session_info(components, args)
+        # Initialize fullscreen htop-like layout 
+        dynamic_title, session_data = self._prepare_session_header_data(components)
+        footer_message = f"🤖 Loaded assistant '{components['session'].assistant_name}' for session"
+        components['renderer'].initialize_fullscreen_mode(session_data, footer_message, title=dynamic_title)
         
         # Main interactive loop
         return self._run_interactive_loop(components, args)
@@ -118,11 +120,15 @@ class OperationHandler:
                         if not user_input:
                             continue  # No speech detected, try again
                     elif current_mode == "image":
-                        # Text input for image mode
+                        # Pause live display during text input
+                        renderer.pause_live_display()
                         user_input = input(f"\n🎨 [{user_name}] ({session.working_dir.name}): ").strip()
+                        renderer.resume_live_display()
                     else:
-                        # Regular text input for chat mode
+                        # Pause live display during text input
+                        renderer.pause_live_display()
                         user_input = input(f"\n💬 [{user_name}] ({session.working_dir.name}): ").strip()
+                        renderer.resume_live_display()
                     
                     if user_input.lower() in ['exit', 'quit', 'q', 'goodbye', 'bye']:
                         renderer.render_success("Goodbye! 👋")
@@ -174,77 +180,275 @@ class OperationHandler:
                         elif result_data and not result_data.get('success'):
                             renderer.render_error("Image generation failed")
                     else:
-                        # Handle regular chat/conversation
-                        response_data = chat_manager.send_message(user_input)
+                        # Add user message to fullscreen chat
+                        renderer.add_chat_message("user", user_input)
+                        
+                        # Create streaming callback for fullscreen display
+                        def streaming_callback(event: str, content: str):
+                            renderer.handle_streaming_response(event, content, session.assistant_name)
+                        
+                        # Handle regular chat/conversation with streaming
+                        response_data = chat_manager.send_message(user_input, callback=streaming_callback)
                         
                         if response_data.get("error"):
-                            renderer.render_error(response_data['content'])
+                            renderer.update_footer_message(f"❌ Error: {response_data['content']}")
                             continue
                         
-                        # Use ResponseRenderer for unified output and speech
-                        mode = "text_and_speech" if current_mode == "speech" else "text"
-                        renderer.render_response(mode, session.assistant_name, response_data, style="chat")
+                        # Handle speech if in speech mode
+                        if current_mode == "speech" and speech_handler:
+                            speech_handler.speak(response_data['content'])
                         
                         # Handle file operations
                         if file_ops and response_data['content']:
                             code_blocks = file_ops.parse_code_blocks(response_data['content'])
                             if code_blocks:
                                 file_ops.apply_code_changes(code_blocks, args.auto_confirm)
+                        
+                        # Update footer to ready state
+                        renderer.update_footer_message("Ready for input...")
                 
                 except KeyboardInterrupt:
+                    renderer.exit_fullscreen_mode()
                     renderer.render_success("Goodbye! 👋")
                     break
                 except Exception as e:
+                    renderer.exit_fullscreen_mode()
                     renderer.render_error(f"Error: {e}")
         
         finally:
-            # Clean up speech resources
+            # Clean up fullscreen and speech resources
+            renderer.exit_fullscreen_mode()
             if speech_handler:
                 speech_handler.cleanup()
         
         return True
     
+    def _prepare_session_header_data(self, components: Dict[str, Any]) -> tuple:
+        """Prepare session data for header table and dynamic title.
+        
+        Returns:
+            tuple: (title, session_data_list)
+        """
+        session = components['session']
+        model_info = components['model_info']
+        speech_handler = components['speech_handler']
+        current_mode = components['current_mode']
+        mode_name = components['mode_name']
+        
+        # Create dynamic title: assistant_name (model_name)
+        dynamic_title = f"📊 {session.assistant_name} ({model_info['model']})"
+        
+        session_data = []
+        
+        # Config info row (removed Assistant and Model since they're in title)
+        config_info = {
+            "Property": "Temperature",
+            "Value": str(model_info['temperature']),
+            "Property2": "Max Tokens",
+            "Value2": str(model_info['max_tokens']),
+            "Property3": "Personality", 
+            "Value3": model_info['personality']
+        }
+        session_data.append(config_info)
+        
+        # Mode row (single column)
+        mode_info = {
+            "Property": f"Mode: {mode_name}",
+            "Value": "",
+            "Property2": "",
+            "Value2": "",
+            "Property3": "",
+            "Value3": ""
+        }
+        session_data.append(mode_info)
+        
+        # Add mode-specific info and commands
+        if current_mode == "image":
+            image_models = session.config.get('image', {}).get('models', ['stable-diffusion'])
+            image_info = {
+                "Property": "Image Models",
+                "Value": ', '.join(image_models),
+                "Property2": "Working Dir",
+                "Value2": str(session.working_dir),
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(image_info)
+            
+            # Commands row (single column)
+            cmd_info = {
+                "Property": "Commands: 'list models', 'switch model', '/mode=chat'",
+                "Value": "",
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(cmd_info)
+            
+        elif speech_handler:
+            status = speech_handler.get_status()
+            speech_info = {
+                "Property": "Speech Backend",
+                "Value": status['speech_backend'],
+                "Property2": "Voice",
+                "Value2": f"{status['voice_name']} ({status['voice_id']})",
+                "Property3": "Speech Rate",
+                "Value3": f"{status['speech_rate']} WPM"
+            }
+            session_data.append(speech_info)
+            
+            working_dir_info = {
+                "Property": "Working Dir",
+                "Value": str(session.working_dir),
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(working_dir_info)
+            
+            # Commands row (single column)
+            cmd_info = {
+                "Property": "Commands: 'exit', '/mode=chat', '/mode=image'",
+                "Value": "",
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(cmd_info)
+            
+            # Voice commands row (single column)
+            voice_cmd_info = {
+                "Property": "Voice Commands: Speak naturally or say commands",
+                "Value": "",
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(voice_cmd_info)
+            
+        else:
+            working_dir_info = {
+                "Property": "Working Dir",
+                "Value": str(session.working_dir),
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(working_dir_info)
+            
+            # Commands row (single column)
+            cmd_info = {
+                "Property": "Commands: 'exit', 'reset', '/dir=<path>'",
+                "Value": "",
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(cmd_info)
+            
+            # Mode switch row (single column)
+            mode_switch_info = {
+                "Property": "Mode Switch: '/mode=speech', '/mode=image'",
+                "Value": "",
+                "Property2": "",
+                "Value2": "",
+                "Property3": "",
+                "Value3": ""
+            }
+            session_data.append(mode_switch_info)
+        
+        return dynamic_title, session_data
+    
     def _display_session_info(self, components: Dict[str, Any], args) -> None:
-        """Display session information panel."""
+        """Display session information panel in multi-column format."""
         session = components['session']
         model_info = components['model_info']
         speech_handler = components['speech_handler']
         renderer = components['renderer']
+        current_mode = components['current_mode']
         
         # Use prepared components for mode info
         mode_name = components['mode_name']
         mode_icon = components['mode_icon']
         
-        # Build session info data structure
-        session_info = {
-            "Assistant": session.assistant_name,
-            "Mode": mode_name,
-            "Model": model_info['model'],
-            "Temperature": str(model_info['temperature']),
-            "Max Tokens": str(model_info['max_tokens']),
-            "Personality": model_info['personality'],
-            "Working Directory": str(session.working_dir)
+        # Build session info as multi-column data structure
+        # Convert to list of dictionaries for multi-column display
+        session_data = []
+        
+        # Basic info row
+        basic_info = {
+            "Property": "Assistant",
+            "Value": session.assistant_name,
+            "Property2": "Mode", 
+            "Value2": mode_name,
+            "Property3": "Model",
+            "Value3": model_info['model']
         }
+        session_data.append(basic_info)
+        
+        # Config info row
+        config_info = {
+            "Property": "Temperature",
+            "Value": str(model_info['temperature']),
+            "Property2": "Max Tokens",
+            "Value2": str(model_info['max_tokens']),
+            "Property3": "Personality", 
+            "Value3": model_info['personality']
+        }
+        session_data.append(config_info)
         
         # Add mode-specific info
-        current_mode = components['current_mode']
         if current_mode == "image":
             image_models = session.config.get('image', {}).get('models', ['stable-diffusion'])
-            session_info["Image Models"] = ', '.join(image_models)
-            commands = "'exit', 'reset', '/mode=chat', '/mode=speech', 'list models', 'switch model <name>'"
+            image_info = {
+                "Property": "Image Models",
+                "Value": ', '.join(image_models),
+                "Property2": "Working Dir",
+                "Value2": str(session.working_dir),
+                "Property3": "Commands",
+                "Value3": "'list models', 'switch model', '/mode=chat'"
+            }
+            session_data.append(image_info)
         elif speech_handler:
             status = speech_handler.get_status()
-            session_info["Speech Backend"] = status['speech_backend']
-            session_info["Voice"] = f"{status['voice_name']} (ID: {status['voice_id']})"
-            session_info["Speech Rate"] = f"{status['speech_rate']} WPM"
-            commands = "'exit', 'reset', '/mode=chat', '/mode=image', or speak naturally"
+            speech_info = {
+                "Property": "Speech Backend",
+                "Value": status['speech_backend'],
+                "Property2": "Voice",
+                "Value2": f"{status['voice_name']} ({status['voice_id']})",
+                "Property3": "Speech Rate",
+                "Value3": f"{status['speech_rate']} WPM"
+            }
+            session_data.append(speech_info)
+            
+            cmd_info = {
+                "Property": "Working Dir",
+                "Value": str(session.working_dir),
+                "Property2": "Commands",
+                "Value2": "'exit', '/mode=chat', '/mode=image'",
+                "Property3": "Voice Commands",
+                "Value3": "Speak naturally or say commands"
+            }
+            session_data.append(cmd_info)
         else:
-            commands = "'exit', 'reset', '/dir=<path>', '/mode=speech', '/mode=image'"
+            path_info = {
+                "Property": "Working Dir",
+                "Value": str(session.working_dir),
+                "Property2": "Commands",
+                "Value2": "'exit', 'reset', '/dir=<path>'",
+                "Property3": "Mode Switch",
+                "Value3": "'/mode=speech', '/mode=image'"
+            }
+            session_data.append(path_info)
         
-        session_info["Commands"] = commands
-        
-        # Use ResponseRenderer to display session info
-        renderer.render_system_info(session_info, style="table")
+        # Use ResponseRenderer to display multi-column session info
+        renderer.render_multi_column_table(session_data, title=f"{mode_icon} Session Information")
         
         # Display mode-specific ready messages using ResponseRenderer
         if current_mode == "image":
@@ -299,13 +503,7 @@ class OperationHandler:
             if not success:
                 renderer.render_error(f"Failed to create assistant '{args.assistant_name}'")
                 return None
-            
-            # Load the newly created assistant
-            session_config = self.assistant_config.load_assistant_for_session(
-                args.assistant_name, 
-                session_working_dir
-            )
-        
+                
         return session_config
     
     def generate_single_image(self, args):
@@ -419,32 +617,19 @@ class OperationHandler:
         
         return True
     
-    def prepare(self, args) -> Dict[str, Any]:
+    def prepare(self, args, session_config: Dict[str, Any]) -> Dict[str, Any]:
         """Prepare all session components and configuration.
         
+        Args:
+            args: Command line arguments
+            session_config: Pre-loaded session configuration
+            
         Returns:
             Dict containing all prepared components: session, model_info, speech_handler,
             generator, chat_manager, file_ops, user_name, renderer, etc.
         """
         from library.session_manager import SessionManager
         from library.speech_handler import SpeechHandler
-        
-        # Load assistant configuration if not already loaded
-        if not hasattr(self, '_current_session_config'):
-            session_working_dir = self._get_session_working_dir(args)
-            session_config = self._load_or_create_assistant(args, session_working_dir)
-            
-            if not session_config:
-                raise RuntimeError(f"Failed to load assistant '{args.assistant_name}'")
-            
-            # Override model if specified
-            if args.model:
-                session_config["assistant"]["model"] = args.model
-                # Note: renderer not available here, will be displayed in run_session
-            
-            self._current_session_config = session_config
-        else:
-            session_config = self._current_session_config
         
         # Initialize session manager
         session = SessionManager(session_config)
